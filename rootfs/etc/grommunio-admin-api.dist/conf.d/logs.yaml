@@ -1,0 +1,40 @@
+logs:
+  Admin API:
+    format: file
+    source: /var/log/grommunio-admin-api.log
+  Antispam:
+    format: file
+    source: /var/log/rspamd/rspamd.log
+  Exim:
+    format: file
+    source: /var/log/exim4/mainlog
+  Gromox delivery:
+    format: file
+    source: /var/log/gromox/delivery.log
+  Gromox event:
+    format: file
+    source: /var/log/gromox/event.log
+  Gromox http:
+    format: file
+    source: /var/log/gromox/http.log
+  Gromox midb:
+    format: file
+    source: /var/log/gromox/midb.log
+  Gromox smtp:
+    format: file
+    source: /var/log/gromox/smtp.log
+  Gromox timer:
+    format: file
+    source: /var/log/gromox/timer.log
+  Gromox zcore:
+    format: file
+    source: /var/log/gromox/zcore.log
+  Nginx:
+    format: file
+    source: /var/log/nginx/error.log
+  Nginx access:
+    format: file
+    source: /var/log/nginx/access.log
+  PHP fpm:
+    format: file
+    source: /var/log/php8.4-fpm.log

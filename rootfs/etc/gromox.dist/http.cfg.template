@@ -1,0 +1,6 @@
+# Gromox HTTP service configuration
+host_id = ${GROMMUNIO_HOST}
+http_support_tls = false
+http_force_tls = false
+running_identity = gromox
+http_log_file = /var/log/gromox/http.log

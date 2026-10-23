@@ -1,0 +1,7 @@
+# Gromox MySQL/MariaDB adaptor configuration
+mysql_host = ${DB_HOST}
+mysql_port = ${DB_PORT}
+mysql_username = ${DB_USER}
+mysql_password = ${DB_PASSWORD}
+mysql_dbname = ${DB_NAME}
+schema_upgrade = host:${GROMMUNIO_HOST}

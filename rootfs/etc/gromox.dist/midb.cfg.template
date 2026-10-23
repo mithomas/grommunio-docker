@@ -1,0 +1,3 @@
+# Gromox midb service configuration
+running_identity = gromox
+midb_log_file = /var/log/gromox/midb.log

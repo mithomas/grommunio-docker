@@ -1,0 +1,121 @@
+services:
+  grommunio:
+    build: .
+    image: ${IMAGE_NAME:-grommunio:local}
+    container_name: grommunio
+    read_only: true
+    stop_grace_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    env_file: .env
+    ports:
+      - "${BIND_IP:-127.0.0.1}:${HTTP_PORT:-8080}:8080"
+      - "${BIND_IP:-127.0.0.1}:${ADMIN_PORT:-8081}:8081"
+      - "${BIND_IP:-127.0.0.1}:${RSPAMD_PORT:-11334}:11334"
+      - "${BIND_IP:-127.0.0.1}:${SMTP_PORT:-2525}:2525"
+    tmpfs:
+      - /run:rw,noexec,nosuid,size=64M
+      - /tmp:rw,size=128M
+      - /var/tmp:rw,size=64M
+      - /var/lib/nginx:rw,size=64M
+      - /var/lib/grommunio-web:rw,size=32M
+      - /var/lib/php/sessions:rw,size=16M
+      - /etc/exim4:rw,size=8M
+      - /etc/gromox:rw,size=16M
+      - /etc/grommunio-admin-api:rw,size=16M
+      - /etc/grommunio-admin-common:rw,size=4M
+    volumes:
+      - gromox_data:/var/lib/gromox:rw
+      - antispam_data:/var/lib/rspamd:rw
+      - redis_data:/var/lib/redis:rw
+      - admin_data:/var/lib/grommunio-admin-common:rw
+      - admin_api_data:/var/lib/grommunio-admin-api:rw
+      - exim_spool:/var/spool/exim4:rw
+      - log_data:/var/log:rw
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - grommunio-net
+    restart: unless-stopped
+
+  # Optional companion MariaDB service for standalone testing:
+  # Launch with: docker compose --profile test up -d
+  mariadb:
+    image: mariadb:11.4
+    container_name: grommunio-db
+    profiles:
+      - test
+    read_only: true
+    tmpfs:
+      - /run/mysqld:rw,size=32M
+      - /tmp:rw,size=64M
+    environment:
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-root_secret}
+      MARIADB_DATABASE: ${DB_NAME:-grommunio}
+      MARIADB_USER: ${DB_USER:-grommunio}
+      MARIADB_PASSWORD: ${DB_PASSWORD:-grommunio_secret}
+    volumes:
+      - mariadb_data:/var/lib/mysql:rw
+    ports:
+      - "127.0.0.1:${DB_PORT:-3306}:3306"
+    networks:
+      - grommunio-net
+    restart: unless-stopped
+
+  # Optional companion OpenLDAP service for standalone testing:
+  # Launch with: docker compose --profile test up -d
+  openldap:
+    image: osixia/openldap:1.5.0
+    container_name: grommunio-ldap
+    profiles:
+      - test
+    command: ["--copy-service"]
+    environment:
+      LDAP_ORGANISATION: "Example Org"
+      LDAP_DOMAIN: "${GROMMUNIO_DOMAIN:-example.com}"
+      LDAP_BASE_DN: "${LDAP_SEARCH_BASE:-dc=example,dc=com}"
+      LDAP_ADMIN_PASSWORD: "${LDAP_BIND_PASS:-ldap_secret}"
+      LDAP_RFC2307BIS: "true"
+      LDAP_REMOVE_CONFIG_AFTER_SETUP: "false"
+    volumes:
+      - ./ldap-bootstrap:/container/service/slapd/assets/config/bootstrap/ldif/custom
+      - ldap_data:/var/lib/ldap
+      - ldap_config:/etc/ldap/slapd.d
+    ports:
+      - "127.0.0.1:${LDAP_PORT:-389}:389"
+    networks:
+      - grommunio-net
+    restart: unless-stopped
+
+volumes:
+  gromox_data:
+    name: grommunio_gromox_data
+  antispam_data:
+    name: grommunio_antispam_data
+  redis_data:
+    name: grommunio_redis_data
+  admin_data:
+    name: grommunio_admin_data
+  admin_api_data:
+    name: grommunio_admin_api_data
+  exim_spool:
+    name: grommunio_exim_spool
+  log_data:
+    name: grommunio_log_data
+  mariadb_data:
+    name: grommunio_mariadb_data
+  ldap_data:
+    name: grommunio_ldap_data
+  ldap_config:
+    name: grommunio_ldap_config
+
+networks:
+  grommunio-net:
+    name: grommunio_net
+    enable_ipv6: true
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+        - subnet: fd00:cafe:beef::/64
+
+

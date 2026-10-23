@@ -1,0 +1,321 @@
+name: Build, Test & Publish Docker Image
+
+on:
+  schedule:
+    # Scan for upstream Debian and Grommunio updates every 6 hours
+    - cron: '0 */6 * * *'
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+    paths:
+      - 'Dockerfile'
+      - 'rootfs/**'
+      - 'tests/**'
+      - 'ldap-bootstrap/**'
+      - 'docker-compose.yml'
+      - '.github/workflows/**'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'Dockerfile'
+      - 'rootfs/**'
+      - 'tests/**'
+      - 'ldap-bootstrap/**'
+      - 'docker-compose.yml'
+      - '.github/workflows/**'
+  workflow_dispatch:
+    inputs:
+      force_build:
+        description: 'Force full rebuild bypassing upstream cache'
+        required: false
+        type: boolean
+        default: false
+      publish_image:
+        description: 'Publish image to Docker Hub (if credentials configured)'
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  check-upstream:
+    name: Check Upstream Updates
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.decision.outputs.should_build }}
+      fingerprint: ${{ steps.upstream.outputs.fingerprint }}
+      cache_hit: ${{ steps.cache-check.outputs.cache-hit }}
+    steps:
+      - name: Query upstream Debian digest and Grommunio package checksum
+        id: upstream
+        run: |
+          set -euo pipefail
+
+          echo "Querying upstream debian:trixie-slim digest from Docker Hub..."
+          DEBIAN_DIGEST=$(curl -fsSL --retry 3 --retry-connrefused "https://hub.docker.com/v2/repositories/library/debian/tags/trixie-slim" 2>/dev/null | jq -r '.digest // empty' 2>/dev/null || true)
+
+          echo "Querying upstream Grommunio Debian 13 Packages checksum..."
+          GROMMUNIO_HASH=$(curl -fsSL --retry 3 --retry-connrefused "https://download.grommunio.com/community/Debian_13/dists/Debian_13/Release" 2>/dev/null | awk '/SHA256:/ {flag=1; next} /^[A-Z][A-Za-z0-9-]+:/ {flag=0} flag && /main\/binary-amd64\/Packages$/ {print $1; exit}' 2>/dev/null || true)
+
+          if [ -z "$DEBIAN_DIGEST" ] || [ -z "$GROMMUNIO_HASH" ]; then
+            echo "::warning::Unable to retrieve upstream digests. Fallback to trigger build."
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            echo "fingerprint=fallback-$(date +%s)" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          FINGERPRINT=$(echo -n "${DEBIAN_DIGEST}-${GROMMUNIO_HASH}" | sha256sum | awk '{print $1}')
+          echo "Debian base digest: ${DEBIAN_DIGEST}"
+          echo "Grommunio repo SHA256: ${GROMMUNIO_HASH}"
+          echo "Computed upstream fingerprint: ${FINGERPRINT}"
+          echo "fingerprint=${FINGERPRINT}" >> "$GITHUB_OUTPUT"
+
+      - name: Check cached upstream fingerprint
+        id: cache-check
+        uses: actions/cache/restore@v4
+        with:
+          path: .upstream-fingerprint.txt
+          key: upstream-fingerprint-${{ steps.upstream.outputs.fingerprint }}
+
+      - name: Determine if build is required
+        id: decision
+        run: |
+          EVENT="${{ github.event_name }}"
+          CACHE_HIT="${{ steps.cache-check.outputs.cache-hit }}"
+          FORCE_BUILD="${{ inputs.force_build || 'false' }}"
+
+          echo "Trigger event: ${EVENT}"
+          echo "Upstream cache hit: ${CACHE_HIT}"
+          echo "Force build flag: ${FORCE_BUILD}"
+
+          if [ "$EVENT" = "push" ] || [ "$EVENT" = "pull_request" ] || [ "$FORCE_BUILD" = "true" ]; then
+            echo "Build triggered by code change, PR, or force_build override."
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+          elif [ "$CACHE_HIT" != "true" ]; then
+            echo "Upstream update detected (fingerprint cache miss). Rebuild required."
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No upstream changes and no code modifications. Skipping build."
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build-test-publish:
+    name: Build, Test & Publish
+    needs: check-upstream
+    if: needs.check-upstream.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    env:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+      DOCKERHUB_REPOSITORY: ${{ secrets.DOCKERHUB_REPOSITORY }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build local container image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          load: true
+          tags: grommunio-ci:local
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Prepare test environment
+        run: |
+          cp -f .env.example .env
+          echo "IMAGE_NAME=grommunio-ci:local" >> .env
+
+      - name: Start services with docker compose
+        run: |
+          docker compose --profile test up -d --no-build
+
+      - name: Await container health
+        run: |
+          echo "Awaiting Grommunio container healthy status..."
+          timeout=120
+          while [ $timeout -gt 0 ]; do
+            STATUS=$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}starting{{end}}' grommunio 2>/dev/null || echo "starting")
+            echo "Current status: $STATUS (${timeout}s remaining)"
+            if [ "$STATUS" = "healthy" ]; then
+              echo "Container is healthy!"
+              break
+            fi
+            sleep 3
+            timeout=$((timeout - 3))
+          done
+
+          if [ $timeout -le 0 ]; then
+            echo "::error::Grommunio container failed to become healthy within timeout."
+            docker compose --profile test logs
+            exit 1
+          fi
+
+      - name: Run verification test suite
+        run: |
+          python3 tests/run_all.py
+
+      - name: Dump logs on failure
+        if: failure()
+        run: |
+          docker compose --profile test logs grommunio mariadb openldap || true
+
+      - name: Tear down test environment
+        if: always()
+        run: |
+          docker compose --profile test down -v || true
+
+      - name: Extract package versions, attach OCI labels, and generate tags
+        id: tags
+        run: |
+          set -euo pipefail
+
+          # Extract package and runtime versions directly from the built image
+          eval "$(docker run --rm --entrypoint /bin/sh grommunio-ci:local -c '
+            echo "DEBIAN_VER=$(cat /etc/debian_version 2>/dev/null || echo unknown)"
+            echo "GROMOX_VER=$(dpkg-query -W -f="\${Version}" gromox 2>/dev/null || echo unknown)"
+            echo "WEBMAIL_VER=$(dpkg-query -W -f="\${Version}" grommunio-web 2>/dev/null || echo unknown)"
+            echo "ZPUSH_VER=$(dpkg-query -W -f="\${Version}" grommunio-sync 2>/dev/null || echo unknown)"
+            echo "ADMIN_API_VER=$(dpkg-query -W -f="\${Version}" grommunio-admin-api 2>/dev/null || echo unknown)"
+            echo "ADMIN_WEB_VER=$(dpkg-query -W -f="\${Version}" grommunio-admin-web 2>/dev/null || echo unknown)"
+            echo "RSPAMD_VER=$(dpkg-query -W -f="\${Version}" rspamd 2>/dev/null || echo unknown)"
+            echo "EXIM_VER=$(dpkg-query -W -f="\${Version}" exim4-daemon-heavy 2>/dev/null || echo unknown)"
+            echo "NGINX_VER=$(dpkg-query -W -f="\${Version}" nginx 2>/dev/null || echo unknown)"
+            echo "REDIS_VER=$(dpkg-query -W -f="\${Version}" redis-server 2>/dev/null || echo unknown)"
+            echo "PHP_VER=$(php -r "echo PHP_VERSION;" 2>/dev/null || dpkg-query -W -f="\${Version}" php-cli 2>/dev/null || echo unknown)"
+          ')"
+
+          RFC3339_TIME=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+          DATE_TIME_TAG=$(date -u +'%Y%m%d-%H%M')
+          GIT_SHA_SHORT="${GITHUB_SHA::7}"
+
+          # Parse semantic Gromox version components
+          GROMOX_MAJOR=$(echo "$GROMOX_VER" | sed -E 's/^([0-9]+).*/\1/')
+          GROMOX_MINOR=$(echo "$GROMOX_VER" | sed -E 's/^([0-9]+\.[0-9]+).*/\1/')
+          GROMOX_PATCH=$(echo "$GROMOX_VER" | sed -E 's/^([0-9]+\.[0-9]+(\.[0-9]+)?).*$/\1/')
+          FULL_BUILD_TAG="${GROMOX_PATCH}-${DATE_TIME_TAG}-${GIT_SHA_SHORT}"
+
+          echo "Debian version: ${DEBIAN_VER}"
+          echo "Gromox version: ${GROMOX_VER}"
+          echo "Gromox major: ${GROMOX_MAJOR}"
+          echo "Gromox minor: ${GROMOX_MINOR}"
+          echo "Gromox patch: ${GROMOX_PATCH}"
+          echo "Webmail version: ${WEBMAIL_VER}"
+          echo "Z-Push version: ${ZPUSH_VER}"
+          echo "Admin API version: ${ADMIN_API_VER}"
+          echo "Admin Web version: ${ADMIN_WEB_VER}"
+          echo "Rspamd version: ${RSPAMD_VER}"
+          echo "Exim version: ${EXIM_VER}"
+          echo "Nginx version: ${NGINX_VER}"
+          echo "Redis version: ${REDIS_VER}"
+          echo "PHP version: ${PHP_VER}"
+          echo "Full build tag: ${FULL_BUILD_TAG}"
+          echo "Build time: ${RFC3339_TIME}"
+
+          echo "gromox_major=${GROMOX_MAJOR}" >> "$GITHUB_OUTPUT"
+          echo "gromox_minor=${GROMOX_MINOR}" >> "$GITHUB_OUTPUT"
+          echo "gromox_patch=${GROMOX_PATCH}" >> "$GITHUB_OUTPUT"
+          echo "full_build_tag=${FULL_BUILD_TAG}" >> "$GITHUB_OUTPUT"
+
+          # Publish component version table to GitHub Actions step summary
+          {
+            echo "### Component Versions & Metadata"
+            echo "| Component | Version |"
+            echo "| :--- | :--- |"
+            echo "| **Debian** | \`${DEBIAN_VER}\` |"
+            echo "| **Gromox** | \`${GROMOX_VER}\` |"
+            echo "| **Grommunio Webmail** | \`${WEBMAIL_VER}\` |"
+            echo "| **Grommunio Sync (Z-Push)** | \`${ZPUSH_VER}\` |"
+            echo "| **Admin API** | \`${ADMIN_API_VER}\` |"
+            echo "| **Admin Web UI** | \`${ADMIN_WEB_VER}\` |"
+            echo "| **Rspamd** | \`${RSPAMD_VER}\` |"
+            echo "| **Exim** | \`${EXIM_VER}\` |"
+            echo "| **Nginx** | \`${NGINX_VER}\` |"
+            echo "| **Redis** | \`${REDIS_VER}\` |"
+            echo "| **PHP** | \`${PHP_VER}\` |"
+            echo "| **Build Time** | \`${RFC3339_TIME}\` |"
+            echo "| **Commit SHA** | \`${GITHUB_SHA}\` |"
+            echo "| **Full Tag** | \`${FULL_BUILD_TAG}\` |"
+            echo "| **SemVer Tags** | \`${GROMOX_MAJOR}\`, \`${GROMOX_MINOR}\`, \`${GROMOX_PATCH}\`, \`latest\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # Attach OCI metadata labels to the built image
+          printf 'FROM grommunio-ci:local\nLABEL org.opencontainers.image.created="%s" \\\n      org.opencontainers.image.revision="%s" \\\n      org.opencontainers.image.version.gromox="%s" \\\n      org.opencontainers.image.version.webmail="%s" \\\n      org.opencontainers.image.version.zpush="%s" \\\n      org.opencontainers.image.version.admin-api="%s" \\\n      org.opencontainers.image.version.admin-web="%s" \\\n      org.opencontainers.image.version.rspamd="%s" \\\n      org.opencontainers.image.version.exim="%s" \\\n      org.opencontainers.image.version.nginx="%s" \\\n      org.opencontainers.image.version.redis="%s" \\\n      org.opencontainers.image.version.php="%s" \\\n      org.opencontainers.image.version.debian="%s"\n' \
+            "${RFC3339_TIME}" \
+            "${GITHUB_SHA}" \
+            "${GROMOX_VER}" \
+            "${WEBMAIL_VER}" \
+            "${ZPUSH_VER}" \
+            "${ADMIN_API_VER}" \
+            "${ADMIN_WEB_VER}" \
+            "${RSPAMD_VER}" \
+            "${EXIM_VER}" \
+            "${NGINX_VER}" \
+            "${REDIS_VER}" \
+            "${PHP_VER}" \
+            "${DEBIAN_VER}" | docker build -t grommunio-ci:labeled -
+
+      - name: Log in to Docker Hub
+        if: github.event_name != 'pull_request' && (inputs.publish_image == null || inputs.publish_image == true) && env.DOCKERHUB_TOKEN != ''
+        uses: docker/login-action@v3
+        with:
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ env.DOCKERHUB_TOKEN }}
+
+      - name: Tag and push to Docker Hub
+        if: github.event_name != 'pull_request' && (inputs.publish_image == null || inputs.publish_image == true) && env.DOCKERHUB_TOKEN != ''
+        run: |
+          set -euo pipefail
+
+          DOCKER_REPO="${DOCKERHUB_REPOSITORY:-${DOCKERHUB_USERNAME}/grommunio-docker}"
+          echo "Publishing image to Docker Hub repository: ${DOCKER_REPO}"
+
+          RAW_TAGS=(
+            "${DOCKER_REPO}:latest"
+            "${DOCKER_REPO}:${{ steps.tags.outputs.gromox_major }}"
+            "${DOCKER_REPO}:${{ steps.tags.outputs.gromox_minor }}"
+            "${DOCKER_REPO}:${{ steps.tags.outputs.gromox_patch }}"
+            "${DOCKER_REPO}:${{ steps.tags.outputs.full_build_tag }}"
+          )
+
+          # Add Git release tag if event is a tag push
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            RAW_TAGS+=("${DOCKER_REPO}:${{ github.ref_name }}")
+          fi
+
+          # Deduplicate tags while preserving order
+          TAGS=($(printf '%s\n' "${RAW_TAGS[@]}" | awk '!seen[$0]++'))
+
+          for TAG in "${TAGS[@]}"; do
+            echo "Tagging and pushing ${TAG}..."
+            docker tag grommunio-ci:labeled "${TAG}"
+            docker push "${TAG}"
+          done
+
+      - name: Notify when Docker Hub credentials not configured
+        if: github.event_name != 'pull_request' && (env.DOCKERHUB_TOKEN == '' || env.DOCKERHUB_USERNAME == '')
+        run: |
+          echo "::notice::Docker Hub publication skipped: DOCKERHUB_USERNAME or DOCKERHUB_TOKEN secret is not configured."
+
+      - name: Save upstream fingerprint cache
+        if: success() && github.event_name != 'pull_request' && needs.check-upstream.outputs.cache_hit != 'true'
+        run: |
+          echo "${{ needs.check-upstream.outputs.fingerprint }}" > .upstream-fingerprint.txt
+
+      - name: Store cache marker
+        if: success() && github.event_name != 'pull_request' && needs.check-upstream.outputs.cache_hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: .upstream-fingerprint.txt
+          key: upstream-fingerprint-${{ needs.check-upstream.outputs.fingerprint }}

@@ -1,0 +1,3 @@
+# Gromox event service configuration
+running_identity = gromox
+event_log_file = /var/log/gromox/event.log

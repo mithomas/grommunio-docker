@@ -1,0 +1,12 @@
+# Gromox delivery-queue (LMTP listener) configuration
+command_protocol = lmtp
+host_id = ${GROMMUNIO_HOST}
+lda_log_level = 4
+lda_log_file = /var/log/gromox/smtp.log
+mail_max_length = 64M
+smtp_support_starttls = false
+smtp_force_starttls = false
+running_identity = gromox
+lda_thread_init_num = 1
+lda_thread_charge_num = 20
+context_num = 50

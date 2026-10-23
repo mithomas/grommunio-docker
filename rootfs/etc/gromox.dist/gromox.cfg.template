@@ -1,0 +1,13 @@
+# Gromox master configuration
+http_listen = [::]:10080
+http_listen_tls =
+lda_listen = [::]:24
+lda_listen_tls =
+outgoing_smtp_url = smtp://127.0.0.1:2525/
+auth_backend_selection = ${GROMOX_AUTH_BACKEND}
+daemons_fd_limit = 0
+lda_junk_rules = X-Spam=Yes
+exmdb_listen = [::1]:5000 127.0.0.1:5000
+exmdb_hosts_allow = ::1 127.0.0.1 ::ffff:127.0.0.1
+midb_listen = [::1]:5555 127.0.0.1:5555
+

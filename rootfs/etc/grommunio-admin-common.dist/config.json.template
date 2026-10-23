@@ -1,0 +1,8 @@
+{
+  "apiAddress": "/api",
+  "mailWebAddress": "/",
+  "chatWebAddress": "",
+  "videoWebAddress": "",
+  "fileWebAddress": "",
+  "archiveWebAddress": ""
+}

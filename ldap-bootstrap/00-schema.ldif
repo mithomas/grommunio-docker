@@ -1,0 +1,24 @@
+# ==============================================================================
+# Grommunio OpenLDAP Auxiliary Schema Extensions
+# ==============================================================================
+dn: cn=grommunio,cn=schema,cn=config
+objectClass: olcSchemaConfig
+cn: grommunio
+olcAttributeTypes: ( 1.3.6.1.4.1.10176.1000.1.1
+  NAME 'mailAlternativeAddress'
+  DESC 'Alternative / secondary RFC822 email address (alias)'
+  EQUALITY caseIgnoreIA5Match
+  SUBSTR caseIgnoreIA5SubstringsMatch
+  SYNTAX 1.3.6.1.4.1.1466.115.121.1.26{256} )
+olcAttributeTypes: ( 1.3.6.1.4.1.10176.1000.1.2
+  NAME 'mailPrimaryAddress'
+  DESC 'Primary RFC822 email address'
+  EQUALITY caseIgnoreIA5Match
+  SUBSTR caseIgnoreIA5SubstringsMatch
+  SYNTAX 1.3.6.1.4.1.1466.115.121.1.26{256} SINGLE-VALUE )
+olcObjectClasses: ( 1.3.6.1.4.1.10176.1000.2.1
+  NAME 'grommunioAccount'
+  DESC 'Auxiliary object class for grommunio mail attributes'
+  SUP top
+  AUXILIARY
+  MAY ( mailAlternativeAddress $ mailPrimaryAddress ) )

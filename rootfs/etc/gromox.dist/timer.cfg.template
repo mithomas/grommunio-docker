@@ -1,0 +1,3 @@
+# Gromox timer service configuration
+running_identity = gromox
+timer_log_file = /var/log/gromox/timer.log

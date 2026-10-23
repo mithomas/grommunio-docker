@@ -1,0 +1,8 @@
+# Gromox delivery backend configuration
+host_id = ${GROMMUNIO_HOST}
+running_identity = gromox
+dequeue_path = /var/lib/gromox/queue
+lda_log_level = 4
+lda_log_file = /var/log/gromox/delivery.log
+work_threads_min = 1
+work_threads_max = 5

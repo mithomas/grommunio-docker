@@ -1,0 +1,46 @@
+# ==============================================================================
+# OpenLDAP Bootstrap Seed Data for Grommunio
+# ==============================================================================
+
+# Organizational Units
+dn: ou=users,dc=example,dc=com
+objectClass: top
+objectClass: organizationalUnit
+ou: users
+
+dn: ou=groups,dc=example,dc=com
+objectClass: top
+objectClass: organizationalUnit
+ou: groups
+
+# User Entry: testuser
+dn: uid=testuser,ou=users,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+objectClass: posixAccount
+objectClass: shadowAccount
+objectClass: grommunioAccount
+uid: testuser
+cn: Test User
+sn: User
+givenName: Test
+displayName: Test User
+mail: testuser@example.com
+userPassword: testuser_secret
+uidNumber: 10001
+gidNumber: 10001
+homeDirectory: /home/testuser
+loginShell: /bin/bash
+mailAlternativeAddress: alias.testuser@example.com
+
+# Group Entry: grommunio-users (Mail-enabled group / Distribution list)
+dn: cn=grommunio-users,ou=groups,dc=example,dc=com
+objectClass: top
+objectClass: posixGroup
+objectClass: grommunioAccount
+cn: grommunio-users
+gidNumber: 10001
+mailPrimaryAddress: grommunio-users@example.com
+memberUid: testuser

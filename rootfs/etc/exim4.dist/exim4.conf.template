@@ -1,0 +1,120 @@
+# ==============================================================================
+# In-Container Exim 4 Configuration for Grommunio
+# ==============================================================================
+# - Listens on port 2525
+# - Scans incoming mail with Rspamd (127.0.0.1:11333 via variant=rspamd)
+# - Delivers clean/tagged mail to Gromox LMTP (127.0.0.1:24)
+# - Relays outgoing mail to host Exim (${RELAY_HOST}:${RELAY_PORT})
+# ==============================================================================
+
+# Global settings
+keep_environment = ^LDAP : ^PATH : ^TZ
+daemon_smtp_ports = 2525
+primary_hostname = ${GROMMUNIO_HOST}
+qualify_domain = ${GROMMUNIO_DOMAIN}
+hide mysql_servers = ${DB_HOST}::${DB_PORT}/${DB_NAME}/${DB_USER}/${DB_PASSWORD}
+domainlist local_domains = ${GROMMUNIO_DOMAIN} : ${GROMMUNIO_HOST} : ${DOMAINS} : mysql;SELECT domainname FROM domains WHERE domainname='${quote_mysql:$domain}' AND domain_status = 0
+hostlist relay_from_hosts = 127.0.0.1 : ::1 : 10.0.0.0/8 : 172.16.0.0/12 : 192.168.0.0/16
+
+# Spamd / Rspamd content scanning connection
+spamd_address = 127.0.0.1 11333 variant=rspamd
+
+acl_smtp_rcpt = acl_check_rcpt
+acl_smtp_data = acl_check_data
+
+log_selector = +all_parents +connection_reject +incoming_interface +lost_incoming_connection +received_recipients +smtp_confirmation +smtp_syntax_error +subject
+
+# ------------------------------------------------------------------------------
+# Access Control Lists (ACLs)
+# ------------------------------------------------------------------------------
+begin acl
+
+acl_check_rcpt:
+  accept
+    hosts = :
+
+  accept
+    hosts = +relay_from_hosts
+
+  accept
+    domains = +local_domains
+
+  deny
+    message = relay not permitted
+
+acl_check_data:
+  # Bypass spam scanning for outgoing relays originating from container localhost
+  accept
+    hosts = 127.0.0.1 : ::1
+
+  # Scan inbound messages using container Rspamd
+  warn
+    spam = nobody:true
+    add_header = X-Spam: Yes\nX-Spam-Score: $spam_score\nX-Spam-Report: $spam_report\nX-Spam-Action: $spam_action
+
+  # Reject messages if Rspamd recommends rejection
+  deny
+    condition = ${if eq{$spam_action}{reject}}
+    message   = Message rejected as spam ($spam_score)
+
+  accept
+
+# ------------------------------------------------------------------------------
+# Routers
+# ------------------------------------------------------------------------------
+begin routers
+
+# Route directly if recipient is an existing mailbox or alias in Grommunio
+gromox_direct:
+  driver = accept
+  domains = +local_domains
+  condition = ${lookup mysql{SELECT username FROM users WHERE username='${quote_mysql:$local_part@$domain}' UNION SELECT mainname FROM aliases WHERE aliasname='${quote_mysql:$local_part@$domain}'}{yes}{no}}
+  transport = gromox_lmtp
+  no_more
+
+# Domain Aliasing: If recipient does not exist under requested domain,
+# dynamically redirect to the user's primary mailbox under another local domain
+alias_domains:
+  driver = redirect
+  domains = +local_domains
+  data = ${lookup mysql{SELECT username FROM users WHERE username LIKE '${quote_mysql:$local_part}@%' LIMIT 1}}
+  redirect_router = gromox_local
+
+# Route inbound messages for local domains to Gromox delivery queue via LMTP
+gromox_local:
+  driver = accept
+  domains = +local_domains
+  transport = gromox_lmtp
+  no_more
+
+# Route outbound messages to host Exim smart relay
+outbound_relay:
+  driver = manualroute
+  transport = remote_smtp
+  route_data = ${RELAY_HOST}
+  no_more
+
+# ------------------------------------------------------------------------------
+# Transports
+# ------------------------------------------------------------------------------
+begin transports
+
+# Deliver via LMTP to Gromox delivery-queue listening on 127.0.0.1:24
+gromox_lmtp:
+  driver = smtp
+  protocol = lmtp
+  hosts = 127.0.0.1
+  port = 24
+  allow_localhost
+
+# Relay outbound mail to host Exim
+remote_smtp:
+  driver = smtp
+  port = ${RELAY_PORT}
+  allow_localhost
+
+# ------------------------------------------------------------------------------
+# Retry rules
+# ------------------------------------------------------------------------------
+begin retry
+*   *   F,2h,15m; G,16h,1h,1.5; F,4d,6h
