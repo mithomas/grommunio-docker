@@ -18,73 +18,59 @@ Designed for seamless integration into existing infrastructure:
 ## Service Setup & Data Flow Diagram
 
 ```
-+---------------------------------------------------------------------------------------------------------+
-|                                              HOST ENVIRONMENT                                           |
-|                                                                                                         |
-|  +----------------------------------------------------+    +-----------------------------------------+  |
-|  |             HOST REVERSE PROXY (TLS)               |    |             HOST MTA (EXIM)             |  |
-|  |                                                    |    |                                         |  |
-|  |  mail.example.com     admin.example.com antispam...|    |  Inbound MX Delivery:    Outbound Relay:|  |
-|  +----------+--------------------+-------------+------+    +----------+-----------------------^------+  |
-|             |                    |             |                      |                       |         |
-|        HTTP | 8080          HTTP | 8081   HTTP | 11334           SMTP | 2525             SMTP | 25      |
-|             |                    |             |                      |                       |         |
-+-------------|--------------------|-------------|----------------------|-----------------------|---------+
-              |                    |             |                      |                       |
-+-------------v--------------------v-------------v----------------------v-----------------------+---------+
-|                                    CONTAINER: grommunio (read_only: true)                               |
-|                                                                                                         |
-|  +-- [ NGINX INGRESS & BRIDGES ] --------------------------------------------------------------------+  |
-|  |  Port 8080:  /                             -> fastcgi://unix:/run/php/php-fpm.sock (Webmail)      |  |
-|  |              /Microsoft-Server-ActiveSync  -> fastcgi://unix:/run/php/php-fpm.sock (EAS long-poll) |  |
-|  |              /Autodiscover/                -> http://127.0.0.1:10080 (gromox-http)                |  |
-|  |  Port 8081:  /                             -> static admin-web HTML5 UI                            |  |
-|  |              /api/                         -> uwsgi://unix:/run/grommunio-admin-api/uwsgi.sock     |  |
-|  |  Port 11334: /                             -> http://127.0.0.1:11335/ (Dedicated Rspamd UI/API)   |  |
-|  |  Port 11336: (Internal loopback bridge for Admin API -> Rspamd with password injection)           |  |
-|  +---------------------------------------------------------------------------------------------------+  |
-|                                                                                                         |
-|  +-- [ IN-CONTAINER EXIM MTA & ANTISPAM PIPELINE ] --------------------------------------------------+  |
-|  |                                                                                                   |  |
-|  |  [ Container Exim (:2525) ] <---------------------------------- (Inbound mail from host Exim)     |  |
-|  |        |                                                                                          |  |
-|  |        +---> [ Rspamd (:11333 spamd) ] (Inspects mail, tags spam, logs to Redis buffer)           |  |
-|  |        |                                                                                          |  |
-|  |        v                                                                                          |  |
-|  |  [ Gromox Delivery Queue (:24 LMTP) ]                                                             |  |
-|  |        |                                                                                          |  |
-|  |        v                                                                                          |  |
-|  |  [ Gromox Delivery (LDA) ] (Moves X-Spam=Yes to Junk, clean to Inbox)                             |  |
-|  |        |                                                                                          |  |
-|  |        +---> (Outbound mail relays: Gromox -> Container Exim -> Host Exim:25)                     |  |
-|  +---------------------------------------------------------------------------------------------------+  |
-|                                                                                                         |
-|  +-- [ APPLICATION WORKERS & DAEMONS (Managed by Supervisord) ] -------------------------------------+  |
-|  |                                                                                                   |  |
-|  |  * CONTAINER EXIM (MTA listener :2525, Rspamd spamd filter, internal LMTP transport)             |  |
-|  |  * PHP-FPM POOL (Dynamic: 25 max workers sized for 10 EAS long-polling pings + 5 webmail users)   |  |
-|  |  * GROMMUNIO ADMIN API (uWSGI: 2 workers, 2 threads, connects to :11336 for Spam History)         |  |
-|  |  * GROMOX CORE DAEMONS (gromox-http :10080, gromox-midb, gromox-zcore, gromox-event, timer)      |  |
-|  |  * REDIS (Local cache & session store, maxmemory 128MB, volatile-lru)                            |  |
-|  |  * RSPAMD (Antispam daemon, controller listening on 127.0.0.1:11335)                              |  |
-|  |  * GROMMUNIO-BAYES-SYNC (Bidirectional learning: auto-trains Junk spam & trains ham on move)     |  |
-|  +---------------------------------------------------------------------------------------------------+  |
-|                                                                                                         |
-|  +-- [ TRANSIENT MEMORY (tmpfs) ] ------------------+  +-- [ PERSISTENT DATA (Named Volumes) ] ------+  |
-|  |  /run:       Sockets & PIDs (64MB)               |  |  grommunio_gromox_data   -> /var/lib/gromox |  |
-|  |  /tmp, /var/tmp: Scratch space (128MB / 64MB)    |  |  grommunio_antispam_data -> /var/lib/rspamd |  |
-|  |  /var/lib/nginx, /var/lib/php/sessions (64M / 16M)|  |  grommunio_redis_data    -> /var/lib/redis  |  |
-|  |  /etc/exim4, /etc/gromox, /etc/admin-api (16M)   |  |  grommunio_exim_spool    -> /var/spool/exim4|  |
-|  |                                                  |  |  grommunio_log_data      -> /var/log        |  |
-|  +--------------------------------------------------+  +---------------------------------------------+  |
-+------------------------------------------+-------------------------------------+------------------------+
-                                           |                                     |
-                                           | TCP: 3306                           | LDAP: 389 / 636
-                                           v                                     v
-                        +------------------------------------+ +-----------------------------------+
-                        |    EXTERNAL MARIADB DATABASE       | |       EXTERNAL OPENLDAP SERVER    |
-                        | (Testing container profile: test)  | |    (Authentication & Directory)   |
-                        +------------------------------------+ +-----------------------------------+
++-----------------------------------------------------------------------------------+
+|                                 HOST ENVIRONMENT                                  |
+|                                                                                   |
+|  +----------------------------------------+  +---------------------------------+  |
+|  |        HOST REVERSE PROXY (TLS)        |  |         HOST MTA (EXIM)         |  |
+|  |  mail.*        admin.*      antispam.* |  |  Inbound MX:     Outbound Relay:|  |
+|  +----+--------------+-------------+------+  +-------+------------------+^-----+  |
+|  HTTP | 8080    HTTP | 8081   HTTP | 11334      SMTP | 2525        SMTP || 25     |
++-------|--------------|-------------|-----------------|------------------||--------+
+        v              v             v                 v                  ||
++-------------------------------------------------------------------------||--------+
+|                         CONTAINER: grommunio (read_only: true)          ||        |
+|                                                                         ||        |
+|  +-- [ NGINX INGRESS & BRIDGES ] ---------------------------------------||-----+  |
+|  |  :8080  /                            -> fastcgi:/run/php/php-fpm.sock (Web) |  |
+|  |         /Microsoft-Server-ActiveSync -> fastcgi:/run/php/php-fpm.sock (EAS) |  |
+|  |         /Autodiscover/               -> http://127.0.0.1:10080 (gromox-http)|  |
+|  |  :8081  /                            -> static admin-web HTML5 UI           |  |
+|  |         /api/                        -> uwsgi:/run/grommunio-admin-api/sock |  |
+|  |  :11334 /                            -> http://127.0.0.1:11335/ (Rspamd UI) |  |
+|  |  :11336 (Internal loopback bridge for Admin API -> Rspamd w/ password)      |  |
+|  +-----------------------------------------------------------------------------+  |
+|                                                                                   |
+|  +-- [ IN-CONTAINER EXIM MTA & ANTISPAM PIPELINE ] ----------------------------+  |
+|  |  [ Container Exim (:2525) ] <----- (Inbound mail from host Exim)            |  |
+|  |        +---> [ Rspamd (:11333 spamd) ] (Scans mail, tags spam, logs Redis)  |  |
+|  |        v                                                                    |  |
+|  |  [ Gromox Delivery Queue (:24 LMTP) ] -> [ Gromox LDA ] (Junk vs Inbox)     |  |
+|  |        +---> (Outbound mail relays: Gromox -> Container Exim -> Host :25) --+  |
+|  +-----------------------------------------------------------------------------+  |
+|                                                                                   |
+|  +-- [ APPLICATION WORKERS & DAEMONS (Managed by Supervisord) ] ---------------+  |
+|  |  * CONTAINER EXIM (MTA :2525, Rspamd spamd filter, internal LMTP transport) |  |
+|  |  * PHP-FPM POOL (Dynamic: 25 max workers for 10 EAS pings + 5 webmail users)|  |
+|  |  * GROMMUNIO ADMIN API (uWSGI: 2 workers, 2 threads, queries :11336)        |  |
+|  |  * GROMOX DAEMONS (http :10080, midb, zcore, event, timer, delivery, queue) |  |
+|  |  * REDIS (Local cache & session store, maxmemory 128MB, volatile-lru)       |  |
+|  |  * RSPAMD (Antispam daemon, controller on 127.0.0.1:11335)                  |  |
+|  |  * GROMMUNIO-BAYES-SYNC (Auto-trains Junk as spam & non-Junk moves as ham)  |  |
+|  +-----------------------------------------------------------------------------+  |
+|                                                                                   |
+|  +-- [ TRANSIENT (tmpfs) ] ------------+ +-- [ PERSISTENT (Named Volumes) ] ---+  |
+|  |  /run (64M), /tmp (128M), /var/tmp  | |  grommunio_gromox_data -> gromox    |  |
+|  |  /var/lib/nginx, /var/lib/php/sess  | |  grommunio_antispam_data -> rspamd  |  |
+|  |  /etc/exim4, /etc/gromox, /etc/api  | |  grommunio_redis/exim_spool/log_data|  |
+|  +-------------------------------------+ +-------------------------------------+  |
++------------------------------+-----------------------------------+----------------+
+                               | TCP: 3306                         | LDAP: 389/636
+                               v                                   v
+            +----------------------------------+ +---------------------------------+
+            |    EXTERNAL MARIADB DATABASE     | |    EXTERNAL OPENLDAP SERVER     |
+            | (Testing container profile: test)| |  (Authentication & Directory)   |
+            +----------------------------------+ +---------------------------------+
 ```
 
 ---
@@ -428,22 +414,21 @@ python3 tests/run_all.py
 
 ## Automated Builds & Docker Hub CI/CD
 
-The repository includes a production-grade GitHub Actions workflow (`.github/workflows/build-and-publish.yml`) that automates container builds, integration testing, and publishing to Docker Hub at [`mithomas/grommunio-docker`](https://hub.docker.com/r/mithomas/grommunio-docker).
+The repository includes two GitHub Actions workflows that automate container builds, integration testing, and publishing to Docker Hub at [`mithomas/grommunio-docker`](https://hub.docker.com/r/mithomas/grommunio-docker):
+- **`.github/workflows/build-and-publish.yml`**: Builds, tests, tags, and publishes container images (and syncs the Docker Hub overview on publish).
+- **`.github/workflows/sync-dockerhub-readme.yml`**: Automatically syncs `README.md` and the repository short description to the Docker Hub Overview whenever `README.md` is updated on `main` (or via manual `workflow_dispatch`), completing relative links to GitHub URLs.
 
 ### Smart Upstream Update Detection
-Rather than performing blind rebuilds, the workflow uses a two-stage detection pipeline:
 1. **Periodic Scan:** Runs every 6 hours (`0 */6 * * *`) via GitHub Actions cron.
-2. **Digest Check:** Queries the Docker Hub Registry API for `debian:trixie-slim` digest and the official Grommunio Debian 13 repository (`https://download.grommunio.com/community/Debian_13/dists/Debian_13/Release`) for the `SHA256` checksum of `main/binary-amd64/Packages`.
-3. **Cache Evaluation:** If neither upstream source has changed and no local code commits occurred, the workflow terminates within seconds to conserve GitHub Actions runner minutes.
-4. **Automatic Rebuild:** If an upstream Debian base update or new Grommunio deb packages are published, the workflow automatically builds, tests, and publishes the updated container image.
+2. **Digest Check:** Queries Docker Hub for `debian:trixie-slim` digest and the Grommunio Debian 13 repository (`https://download.grommunio.com/community/Debian_13/dists/Debian_13/Release`) for the `SHA256` checksum of `main/binary-amd64/Packages`.
+3. **Cache Evaluation:** Exits within seconds if neither upstream source nor local code changed.
+4. **Automatic Rebuild:** Automatically builds, tests, and publishes an updated image whenever upstream packages or the base image change.
 
 ### Quality Gate (Integration Testing)
 Before any image is pushed to Docker Hub:
-- Docker Buildx compiles the image for `linux/amd64`.
-- The full companion test stack (`docker compose --profile test up -d`) launches MariaDB, OpenLDAP, and Grommunio.
-- Container health is verified via `/usr/local/bin/container-healthcheck.sh`.
-- The entire 11-step verification test suite (`python3 tests/run_all.py`) is executed inside the CI runner.
-- The workflow only pushes to Docker Hub if 100% of the tests pass. Defective builds or broken upstream packages are blocked automatically.
+- Docker Buildx builds the image for `linux/amd64` and starts the test stack (`docker compose --profile test up -d`).
+- Container health is verified via `/usr/local/bin/container-healthcheck.sh` and all 11 verification tests (`python3 tests/run_all.py`) run in CI.
+- Publication to Docker Hub only proceeds if 100% of tests pass.
 
 ### Image Tagging Convention
 Each published image is tagged with:

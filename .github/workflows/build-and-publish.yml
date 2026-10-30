@@ -302,6 +302,17 @@ jobs:
             docker push "${TAG}"
           done
 
+      - name: Sync README to Docker Hub Overview
+        if: github.event_name != 'pull_request' && (inputs.publish_image == null || inputs.publish_image == true) && env.DOCKERHUB_TOKEN != '' && env.DOCKERHUB_USERNAME != ''
+        uses: peter-evans/dockerhub-description@v4
+        with:
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ env.DOCKERHUB_TOKEN }}
+          repository: ${{ env.DOCKERHUB_REPOSITORY != '' && env.DOCKERHUB_REPOSITORY || format('{0}/grommunio-docker', env.DOCKERHUB_USERNAME) }}
+          readme-filepath: ./README.md
+          short-description: "Production-ready, single-container Grommunio groupware on Debian 13 (Trixie) with Exim & Rspamd."
+          enable-url-completion: true
+
       - name: Notify when Docker Hub credentials not configured
         if: github.event_name != 'pull_request' && (env.DOCKERHUB_TOKEN == '' || env.DOCKERHUB_USERNAME == '')
         run: |
