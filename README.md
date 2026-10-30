@@ -163,7 +163,15 @@ Key variables to inspect:
 - `RSPAMD_PASSWORD` (default `rspamd_secret`): Dedicated password for Rspamd Web Dashboard.
 - `LDAP_HOST`, `LDAP_BIND_USER`, `LDAP_BIND_PASS`, `LDAP_SEARCH_BASE`: OpenLDAP connection.
 
-### 2. Build the Docker Image
+### 2. Pull or Build the Docker Image
+
+**Option A: Use the pre-built image from Docker Hub ([`mithomas/grommunio-docker`](https://hub.docker.com/r/mithomas/grommunio-docker)):**
+```bash
+docker pull mithomas/grommunio-docker:latest
+echo "IMAGE_NAME=mithomas/grommunio-docker:latest" >> .env
+```
+
+**Option B: Build the image locally:**
 ```bash
 docker compose build
 ```
@@ -420,7 +428,7 @@ python3 tests/run_all.py
 
 ## Automated Builds & Docker Hub CI/CD
 
-The repository includes a production-grade GitHub Actions workflow (`.github/workflows/build-and-publish.yml`) that automates container builds, integration testing, and publishing to Docker Hub.
+The repository includes a production-grade GitHub Actions workflow (`.github/workflows/build-and-publish.yml`) that automates container builds, integration testing, and publishing to Docker Hub at [`mithomas/grommunio-docker`](https://hub.docker.com/r/mithomas/grommunio-docker).
 
 ### Smart Upstream Update Detection
 Rather than performing blind rebuilds, the workflow uses a two-stage detection pipeline:
@@ -467,7 +475,7 @@ Every published image is embedded with standard OCI labels (`org.opencontainers.
 
 Inspect labels on any local or pulled image:
 ```bash
-docker inspect --format '{{json .Config.Labels}}' <image-name>:<tag> | jq .
+docker inspect --format '{{json .Config.Labels}}' mithomas/grommunio-docker:latest | jq .
 ```
 
 ### Required GitHub Secrets
@@ -477,7 +485,7 @@ To enable Docker Hub publishing, configure the following secrets in your GitHub 
 | :--- | :--- | :--- |
 | **`DOCKERHUB_USERNAME`** | Docker Hub username or organization name. | Yes |
 | **`DOCKERHUB_TOKEN`** | Docker Hub Personal Access Token (PAT) with `Read & Write` permissions. | Yes |
-| **`DOCKERHUB_REPOSITORY`** | Custom repository name (e.g. `myorg/grommunio-docker`). Defaults to `${DOCKERHUB_USERNAME}/grommunio-docker` if omitted. | Optional |
+| **`DOCKERHUB_REPOSITORY`** | Custom repository name (e.g. `mithomas/grommunio-docker`). Defaults to `${DOCKERHUB_USERNAME}/grommunio-docker` if omitted. | Optional |
 
 *(Note: Pull requests and forks automatically run the build and test suite, but skip Docker Hub publication.)*
 
