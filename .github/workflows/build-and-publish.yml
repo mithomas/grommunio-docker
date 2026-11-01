@@ -134,6 +134,7 @@ jobs:
       - name: Prepare test environment
         run: |
           cp -f .env.example .env
+          cp -f .env.secrets.example .env.secrets
           echo "IMAGE_NAME=grommunio-ci:local" >> .env
 
       - name: Start services with docker compose

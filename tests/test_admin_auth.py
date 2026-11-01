@@ -18,13 +18,14 @@ def load_env_password():
     password = os.environ.get("ADMIN_PASSWORD")
     if password:
         return password
-    env_file = os.path.join(os.path.dirname(__file__), "..", ".env")
-    if os.path.exists(env_file):
-        with open(env_file, "r") as f:
-            for line in f:
-                line = line.strip()
-                if line.startswith("ADMIN_PASSWORD="):
-                    return line.split("=", 1)[1].strip().strip('"').strip("'")
+    for fname in (".env.secrets", ".env"):
+        env_file = os.path.join(os.path.dirname(__file__), "..", fname)
+        if os.path.exists(env_file):
+            with open(env_file, "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("ADMIN_PASSWORD="):
+                        return line.split("=", 1)[1].strip().strip('"').strip("'")
     return "admin_secret"
 
 def check_admin_auth():

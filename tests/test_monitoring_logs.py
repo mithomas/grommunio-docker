@@ -27,12 +27,16 @@ PRECTIME_REGEX = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{1,6}$")
 
 
 def load_env_password():
-    env_path = os.path.join(os.path.dirname(__file__), "..", ".env")
-    if os.path.exists(env_path):
-        with open(env_path, "r", encoding="utf-8") as f:
-            for line in f:
-                if line.strip().startswith("ADMIN_PASSWORD="):
-                    return line.strip().split("=", 1)[1].strip("'\"")
+    password = os.environ.get("ADMIN_PASSWORD")
+    if password:
+        return password
+    for fname in (".env.secrets", ".env"):
+        env_path = os.path.join(os.path.dirname(__file__), "..", fname)
+        if os.path.exists(env_path):
+            with open(env_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.strip().startswith("ADMIN_PASSWORD="):
+                        return line.strip().split("=", 1)[1].strip("'\"")
     return "admin_secret"
 
 

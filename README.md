@@ -53,7 +53,7 @@ Designed for seamless integration into existing infrastructure:
 |  |  * CONTAINER EXIM (MTA :2525, Rspamd spamd filter, internal LMTP transport) |  |
 |  |  * PHP-FPM POOL (Dynamic: 25 max workers for 10 EAS pings + 5 webmail users)|  |
 |  |  * GROMMUNIO ADMIN API (uWSGI: 2 workers, 2 threads, queries :11336)        |  |
-|  |  * GROMOX DAEMONS (http :10080, midb, zcore, event, timer, delivery, queue) |  |
+|  |  * GROMOX DAEMONS (http :10080, midb, zcore, event, delivery, delivery-queue) |  |
 |  |  * REDIS (Local cache & session store, maxmemory 128MB, volatile-lru)       |  |
 |  |  * RSPAMD (Antispam daemon, controller on 127.0.0.1:11335)                  |  |
 |  |  * GROMMUNIO-BAYES-SYNC (Auto-trains Junk as spam & non-Junk moves as ham)  |  |
@@ -108,7 +108,7 @@ ActiveSync and groupware daemons have specific concurrency characteristics that 
   - `lda_thread_init_num = 1`
   - `lda_thread_charge_num = 20`: Maximum connections processed per worker thread.
   - `context_num = 50`: Client context buffer pool.
-* **Memory Footprint:** The combined Gromox daemons (`http`, `midb`, `zcore`, `event`, `timer`, `delivery`, `delivery-queue`) consume ~150MB to 250MB.
+* **Memory Footprint:** The combined Gromox daemons (`http`, `midb`, `zcore`, `event`, `delivery`, `delivery-queue`) consume ~150MB to 250MB.
 
 ### 4. Admin API (uWSGI)
 * **Configuration:** 2 worker processes with 2 threads (`processes = 2`, `threads = 2`).
@@ -131,21 +131,25 @@ ActiveSync and groupware daemons have specific concurrency characteristics that 
 
 ## Quick Start
 
-### 1. Configure Environment
-Copy the example environment file and customize your domain, database credentials, and LDAP settings:
+### 1. Configure Environment & Secrets
+Copy the example configuration and secrets files, then customize your domain, database, LDAP settings, and passwords:
 
 ```bash
 cp .env.example .env
+cp .env.secrets.example .env.secrets
+chmod 600 .env.secrets
 ```
 
-Key variables to inspect:
+**Configuration (`.env`):**
 - `GROMMUNIO_HOST` & `GROMMUNIO_DOMAIN`: Primary hostname and mail domain (e.g. `mail.example.com`).
 - `DOMAINS`: Optional colon-separated secondary domains aliased to `GROMMUNIO_DOMAIN`.
 - `HTTP_PORT` (`8080`), `ADMIN_PORT` (`8081`), `RSPAMD_PORT` (`11334`), `SMTP_PORT` (`2525`): Exposed ingress ports.
-- `DB_HOST` & `DB_PORT` **or** `DB_SOCKET`: MariaDB TCP endpoint or mounted Unix socket (e.g. `/run/mysqld/mysqld.sock`).
-- `DB_NAME`, `DB_USER`, `DB_PASSWORD`: Database name and user credentials (`DB_ROOT_PASSWORD` is only used by the `--profile test` companion container and can be omitted in production).
-- `ADMIN_PASSWORD` (`admin_secret`) & `RSPAMD_PASSWORD` (`rspamd_secret`): Admin UI and Rspamd passwords.
-- `LDAP_HOST`, `LDAP_BIND_USER`, `LDAP_BIND_PASS`, `LDAP_SEARCH_BASE`: OpenLDAP connection.
+- `DB_HOST` & `DB_PORT` **or** `DB_SOCKET`: MariaDB TCP endpoint or mounted Unix socket (`/run/mysqld/mysqld.sock`).
+- `DB_NAME`, `DB_USER`, `LDAP_HOST`, `LDAP_BIND_USER`, `LDAP_SEARCH_BASE`: Database and OpenLDAP settings.
+
+**Secrets (`.env.secrets`):**
+- `DB_PASSWORD`: MariaDB user password (`DB_ROOT_PASSWORD` is only for `--profile test`; omit in production).
+- `ADMIN_PASSWORD`, `RSPAMD_PASSWORD`, `LDAP_BIND_PASS`: Admin UI, Rspamd dashboard, and LDAP bind passwords.
 
 ### 2. Pull or Build the Docker Image
 
@@ -169,7 +173,7 @@ docker compose --profile test up -d
 *(Launches `grommunio` with `mariadb` and `openldap` seeded with `testuser@example.com` and group `grommunio-users` via `ldap-bootstrap/01-init.ldif`.)*
 
 **Production with external MariaDB & LDAP:**
-Ensure your external database (`CREATE DATABASE grommunio;`) and `DB_USER` grants exist. No database `root` user is needed (`DB_ROOT_PASSWORD` can be omitted). If using a host Unix socket (`DB_SOCKET=/run/mysqld/mysqld.sock`), uncomment `- /run/mysqld:/run/mysqld:rw` under `volumes` in `docker-compose.yml` (mounting the directory preserves connectivity across host `mysqld` restarts):
+Ensure your external database (`CREATE DATABASE grommunio;`) and `DB_USER` grants exist. If using a host Unix socket (`DB_SOCKET=/run/mysqld/mysqld.sock`), uncomment `- /run/mysqld:/run/mysqld:rw` under `volumes` in `docker-compose.yml` (mounting the directory preserves connectivity across host `mysqld` restarts):
 ```bash
 docker compose up -d
 ```
