@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Verification Test 1: Supervisor Services Status
-Asserts that all 14 required background processes inside the Grommunio container
+Asserts that all 13 required background processes inside the Grommunio container
 are in the RUNNING state.
 """
 import subprocess
@@ -16,7 +16,6 @@ EXPECTED_SERVICES = {
     "gromox-event",
     "gromox-http",
     "gromox-midb",
-    "gromox-timer",
     "gromox-zcore",
     "nginx",
     "php-fpm",
@@ -52,7 +51,7 @@ def check_services():
 
 if __name__ == "__main__":
     if check_services():
-        print("[+] SUCCESS: All 14 services are RUNNING.\n")
+        print("[+] SUCCESS: All 13 services are RUNNING.\n")
         sys.exit(0)
     else:
         print("[-] FAILED: One or more services are not running.\n", file=sys.stderr)

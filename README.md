@@ -65,7 +65,7 @@ Designed for seamless integration into existing infrastructure:
 |  |  /etc/exim4, /etc/gromox, /etc/api  | |  grommunio_redis/exim_spool/log_data|  |
 |  +-------------------------------------+ +-------------------------------------+  |
 +------------------------------+-----------------------------------+----------------+
-                               | TCP: 3306                         | LDAP: 389/636
+                               | TCP: 3306 or Unix Socket          | LDAP: 389/636
                                v                                   v
             +----------------------------------+ +---------------------------------+
             |    EXTERNAL MARIADB DATABASE     | |    EXTERNAL OPENLDAP SERVER     |
@@ -139,14 +139,12 @@ cp .env.example .env
 ```
 
 Key variables to inspect:
-- `GROMMUNIO_HOST` & `GROMMUNIO_DOMAIN`: Your mail domain (e.g. `mail.example.com`).
-- `HTTP_PORT` (default `8080`): Port for Webmail and ActiveSync.
-- `ADMIN_PORT` (default `8081`): Port for Admin Web UI.
-- `RSPAMD_PORT` (default `11334`): Dedicated port for Rspamd Web Dashboard.
-- `LMTP_PORT` (default `2524`): Port for Exim LMTP inbound hand-off.
-- `DB_HOST`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`: MariaDB connection details.
-- `ADMIN_PASSWORD` (default `admin_secret`): Initial password for Grommunio Admin UI user `admin`.
-- `RSPAMD_PASSWORD` (default `rspamd_secret`): Dedicated password for Rspamd Web Dashboard.
+- `GROMMUNIO_HOST` & `GROMMUNIO_DOMAIN`: Primary hostname and mail domain (e.g. `mail.example.com`).
+- `DOMAINS`: Optional colon-separated secondary domains aliased to `GROMMUNIO_DOMAIN`.
+- `HTTP_PORT` (`8080`), `ADMIN_PORT` (`8081`), `RSPAMD_PORT` (`11334`), `SMTP_PORT` (`2525`): Exposed ingress ports.
+- `DB_HOST` & `DB_PORT` **or** `DB_SOCKET`: MariaDB TCP endpoint or mounted Unix socket (e.g. `/run/mysqld/mysqld.sock`).
+- `DB_NAME`, `DB_USER`, `DB_PASSWORD`: Database name and user credentials (`DB_ROOT_PASSWORD` is only used by the `--profile test` companion container and can be omitted in production).
+- `ADMIN_PASSWORD` (`admin_secret`) & `RSPAMD_PASSWORD` (`rspamd_secret`): Admin UI and Rspamd passwords.
 - `LDAP_HOST`, `LDAP_BIND_USER`, `LDAP_BIND_PASS`, `LDAP_SEARCH_BASE`: OpenLDAP connection.
 
 ### 2. Pull or Build the Docker Image
@@ -168,20 +166,18 @@ docker compose build
 ```bash
 docker compose --profile test up -d
 ```
-*(This launches the `grommunio` container along with `mariadb` and `openldap` seeded with `testuser@example.com` and group `grommunio-users` via `ldap-bootstrap/01-init.ldif`.)*
+*(Launches `grommunio` with `mariadb` and `openldap` seeded with `testuser@example.com` and group `grommunio-users` via `ldap-bootstrap/01-init.ldif`.)*
 
 **Production with external MariaDB & LDAP:**
-Ensure your external database is created (`CREATE DATABASE grommunio;`) and grants are applied for your database user, then start:
+Ensure your external database (`CREATE DATABASE grommunio;`) and `DB_USER` grants exist. No database `root` user is needed (`DB_ROOT_PASSWORD` can be omitted). If using a host Unix socket (`DB_SOCKET=/run/mysqld/mysqld.sock`), uncomment `- /run/mysqld:/run/mysqld:rw` under `volumes` in `docker-compose.yml` (mounting the directory preserves connectivity across host `mysqld` restarts):
 ```bash
 docker compose up -d
 ```
 
-On first startup, the container will:
-1. Wait for database connectivity.
-2. Initialize database schemas (`gromox-dbop -CC`) strictly inside the target database.
-3. Apply schema upgrades (`gromox-dbop -U`).
-4. Set the initial admin password (`grommunio-admin passwd`).
-5. Launch all services via `supervisord`.
+On startup, the container:
+1. Waits for database connectivity (`DB_HOST:DB_PORT` or `DB_SOCKET`).
+2. Checks if tables exist in `DB_NAME` as `DB_USER`; initializes schemas (`gromox-dbop -CC`) only if empty.
+3. Applies pending schema upgrades (`gromox-dbop -U`), sets the admin password, and starts `supervisord`.
 
 ---
 
@@ -190,7 +186,7 @@ On first startup, the container will:
 ### 1. Host Exim Integration
 
 #### A. Inbound Delivery via SMTP (No Spam Filtering Needed on Host)
-Host Exim simply forwards all email destined for Grommunio domains to container port `2525`. Postfix in the container automatically runs it through Rspamd Milter, logs history, and delivers to Gromox:
+Host Exim forwards email for Grommunio domains to container port `2525`. Container Exim scans via Rspamd, logs history, and delivers to Gromox:
 
 ```exim
 # /etc/exim4/conf.d/transport/30_grommunio_smtp
@@ -393,7 +389,7 @@ A standalone test suite validating all container services, endpoints, credential
 
 | Test Script | Scope |
 | :--- | :--- |
-| **`tests/test_services.py`** | Asserts all 14 supervisor background processes report `RUNNING`. |
+| **`tests/test_services.py`** | Asserts all 13 supervisor background processes report `RUNNING`. |
 | **`tests/test_endpoints.py`** | Validates HTTP status codes and content-types across ports `8080`, `8081`, and `11334`. |
 | **`tests/test_webmail_security.py`** | Validates Webmail root delivery (`:8080`), secure cookies, static assets, and absence of PHP errors. |
 | **`tests/test_admin_auth.py`** | Verifies Admin API authentication, JWT token generation, and protected endpoints. |
@@ -404,6 +400,7 @@ A standalone test suite validating all container services, endpoints, credential
 | **`tests/test_defaults.py`** | Validates Admin UI mailbox creation defaults (`:8081`), language, protocols, services, integrations, and quotas. |
 | **`tests/test_ldap_config.py`** | Validates default group mapping population in `/system/mconf/ldap` and disk persistence without permission errors. |
 | **`tests/test_ldap.py`** | Validates companion OpenLDAP (`:389`), directory search, and mailbox provisioning via `downsync`. |
+| **`tests/test_db_socket.py`** | Validates `DB_SOCKET` Unix socket connection handling and DB-free Exim primary/alias domain routing. |
 
 ### Run All Tests
 ```bash
@@ -414,9 +411,9 @@ python3 tests/run_all.py
 
 ## Automated Builds & Docker Hub CI/CD
 
-The repository includes two GitHub Actions workflows that automate container builds, integration testing, and publishing to Docker Hub at [`mithomas/grommunio-docker`](https://hub.docker.com/r/mithomas/grommunio-docker):
+Two GitHub Actions workflows automate container builds, integration testing, and publishing to Docker Hub at [`mithomas/grommunio-docker`](https://hub.docker.com/r/mithomas/grommunio-docker):
 - **`.github/workflows/build-and-publish.yml`**: Builds, tests, tags, and publishes container images (and syncs the Docker Hub overview on publish).
-- **`.github/workflows/sync-dockerhub-readme.yml`**: Automatically syncs `README.md` and the repository short description to the Docker Hub Overview whenever `README.md` is updated on `main` (or via manual `workflow_dispatch`), completing relative links to GitHub URLs.
+- **`.github/workflows/sync-dockerhub-readme.yml`**: Automatically syncs `README.md` to the Docker Hub Overview whenever `README.md` is updated on `main` (or via `workflow_dispatch`), completing relative links to GitHub URLs.
 
 ### Smart Upstream Update Detection
 1. **Periodic Scan:** Runs every 6 hours (`0 */6 * * *`) via GitHub Actions cron.
@@ -427,7 +424,7 @@ The repository includes two GitHub Actions workflows that automate container bui
 ### Quality Gate (Integration Testing)
 Before any image is pushed to Docker Hub:
 - Docker Buildx builds the image for `linux/amd64` and starts the test stack (`docker compose --profile test up -d`).
-- Container health is verified via `/usr/local/bin/container-healthcheck.sh` and all 11 verification tests (`python3 tests/run_all.py`) run in CI.
+- Container health is verified via `/usr/local/bin/container-healthcheck.sh` and all 12 verification tests (`python3 tests/run_all.py`) run in CI.
 - Publication to Docker Hub only proceeds if 100% of tests pass.
 
 ### Image Tagging Convention

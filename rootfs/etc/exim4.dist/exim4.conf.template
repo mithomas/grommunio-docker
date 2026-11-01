@@ -12,8 +12,7 @@ keep_environment = ^LDAP : ^PATH : ^TZ
 daemon_smtp_ports = 2525
 primary_hostname = ${GROMMUNIO_HOST}
 qualify_domain = ${GROMMUNIO_DOMAIN}
-hide mysql_servers = ${DB_HOST}::${DB_PORT}/${DB_NAME}/${DB_USER}/${DB_PASSWORD}
-domainlist local_domains = ${GROMMUNIO_DOMAIN} : ${GROMMUNIO_HOST} : ${DOMAINS} : mysql;SELECT domainname FROM domains WHERE domainname='${quote_mysql:$domain}' AND domain_status = 0
+domainlist local_domains = ${GROMMUNIO_DOMAIN} : ${GROMMUNIO_HOST} : ${DOMAINS}
 hostlist relay_from_hosts = 127.0.0.1 : ::1 : 10.0.0.0/8 : 172.16.0.0/12 : 192.168.0.0/16
 
 # Spamd / Rspamd content scanning connection
@@ -64,20 +63,12 @@ acl_check_data:
 # ------------------------------------------------------------------------------
 begin routers
 
-# Route directly if recipient is an existing mailbox or alias in Grommunio
-gromox_direct:
-  driver = accept
-  domains = +local_domains
-  condition = ${lookup mysql{SELECT username FROM users WHERE username='${quote_mysql:$local_part@$domain}' UNION SELECT mainname FROM aliases WHERE aliasname='${quote_mysql:$local_part@$domain}'}{yes}{no}}
-  transport = gromox_lmtp
-  no_more
-
-# Domain Aliasing: If recipient does not exist under requested domain,
-# dynamically redirect to the user's primary mailbox under another local domain
+# Domain Aliasing: Redirect secondary domains in DOMAINS (or GROMMUNIO_HOST)
+# to the corresponding address in GROMMUNIO_DOMAIN
 alias_domains:
   driver = redirect
-  domains = +local_domains
-  data = ${lookup mysql{SELECT username FROM users WHERE username LIKE '${quote_mysql:$local_part}@%' LIMIT 1}}
+  domains = ${GROMMUNIO_HOST} : ${DOMAINS}
+  data = ${quote_local_part:$local_part}@${GROMMUNIO_DOMAIN}
   redirect_router = gromox_local
 
 # Route inbound messages for local domains to Gromox delivery queue via LMTP

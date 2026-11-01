@@ -17,9 +17,13 @@ export RELAY_HOST="${RELAY_HOST:-host.docker.internal}"
 export RELAY_PORT="${RELAY_PORT:-25}"
 export DB_HOST="${DB_HOST:-mariadb}"
 export DB_PORT="${DB_PORT:-3306}"
+export DB_SOCKET="${DB_SOCKET:-}"
 export DB_NAME="${DB_NAME:-grommunio}"
 export DB_USER="${DB_USER:-grommunio}"
 export DB_PASSWORD="${DB_PASSWORD:-grommunio_secret}"
+if [ -n "${DB_SOCKET}" ]; then
+    export DB_HOST="localhost"
+fi
 export ADMIN_PASSWORD="${ADMIN_PASSWORD:-admin}"
 export RSPAMD_PASSWORD="${RSPAMD_PASSWORD:-rspamd_secret}"
 export LDAP_ENABLED="${LDAP_ENABLED:-true}"
@@ -49,7 +53,10 @@ else
 fi
 
 # 2. Setup tmpfs directories
-mkdir -p /run/gromox /run/php /run/redis /run/rspamd /run/supervisor /run/grommunio-admin-api /run/nginx
+mkdir -p /run/gromox /run/php /run/redis /run/rspamd /run/supervisor /run/grommunio-admin-api /run/nginx /run/mysqld
+if [ -n "${DB_SOCKET}" ] && [ "${DB_SOCKET}" != "/run/mysqld/mysqld.sock" ]; then
+    ln -sf "${DB_SOCKET}" /run/mysqld/mysqld.sock
+fi
 mkdir -p /var/log/gromox /var/log/supervisor /var/log/nginx /var/log/grommunio-sync /var/log/redis /var/log/rspamd /var/log/exim4
 mkdir -p /var/lib/nginx/body /var/lib/nginx/fastcgi /var/lib/nginx/proxy /var/lib/nginx/scgi /var/lib/nginx/uwsgi
 mkdir -p /var/lib/gromox/queue /var/lib/redis /var/lib/rspamd /var/lib/grommunio-admin-common /var/lib/grommunio-admin-api /var/lib/grommunio-web/session /var/lib/grommunio-web/tmp /var/lib/php/sessions
@@ -100,7 +107,7 @@ if [ -d /etc/grommunio-admin-api.dist ]; then
 fi
 mkdir -p /etc/grommunio-admin-api/conf.d
 
-VAR_LIST='$GROMMUNIO_HOST $GROMMUNIO_DOMAIN $DOMAINS $HTTP_PORT $ADMIN_PORT $RSPAMD_PORT $SMTP_PORT $LMTP_PORT $RELAY_HOST $RELAY_PORT $DB_HOST $DB_PORT $DB_NAME $DB_USER $DB_PASSWORD $ADMIN_PASSWORD $GROMOX_AUTH_BACKEND $LDAP_DISABLED $LDAP_HOST $LDAP_START_TLS $LDAP_BIND_USER $LDAP_BIND_PASS $LDAP_SEARCH_BASE $LDAP_USER_FILTER $LDAP_OBJECT_ID $LDAP_MAIL_ATTR $LDAP_USER_ALIASES $LDAP_USER_DISPLAYNAME $LDAP_USER_ALTNAME $LDAP_GROUP_MEMBER_ATTR $LDAP_GROUP_ADDR $LDAP_GROUP_FILTER $LDAP_GROUP_NAME'
+VAR_LIST='$GROMMUNIO_HOST $GROMMUNIO_DOMAIN $DOMAINS $HTTP_PORT $ADMIN_PORT $RSPAMD_PORT $SMTP_PORT $LMTP_PORT $RELAY_HOST $RELAY_PORT $DB_HOST $DB_PORT $DB_SOCKET $DB_NAME $DB_USER $DB_PASSWORD $ADMIN_PASSWORD $GROMOX_AUTH_BACKEND $LDAP_DISABLED $LDAP_HOST $LDAP_START_TLS $LDAP_BIND_USER $LDAP_BIND_PASS $LDAP_SEARCH_BASE $LDAP_USER_FILTER $LDAP_OBJECT_ID $LDAP_MAIL_ATTR $LDAP_USER_ALIASES $LDAP_USER_DISPLAYNAME $LDAP_USER_ALTNAME $LDAP_GROUP_MEMBER_ATTR $LDAP_GROUP_ADDR $LDAP_GROUP_FILTER $LDAP_GROUP_NAME'
 
 envsubst "${VAR_LIST}" < /etc/gromox.dist/gromox.cfg.template > /etc/gromox/gromox.cfg
 envsubst "${VAR_LIST}" < /etc/gromox.dist/smtp.cfg.template > /etc/gromox/smtp.cfg
@@ -142,22 +149,37 @@ fi
 chmod 0644 /etc/grommunio-admin-common/config.json 2>/dev/null || true
 
 # 4. Wait for MariaDB database connectivity
-echo "==> Checking database connection to ${DB_HOST}:${DB_PORT}..."
 MAX_RETRIES=45
 COUNT=0
-while ! nc -z -w 2 "${DB_HOST}" "${DB_PORT}" 2>/dev/null; do
-    COUNT=$((COUNT + 1))
-    if [ ${COUNT} -ge ${MAX_RETRIES} ]; then
-        echo "ERROR: Database at ${DB_HOST}:${DB_PORT} did not respond within ${MAX_RETRIES} seconds."
-        exit 1
-    fi
-    echo "Waiting for MariaDB at ${DB_HOST}:${DB_PORT}... (${COUNT}/${MAX_RETRIES})"
-    sleep 2
-done
-echo "==> Database reachable."
+if [ -n "${DB_SOCKET}" ]; then
+    echo "==> Checking database connection via Unix socket ${DB_SOCKET}..."
+    while ! ( [ -S "${DB_SOCKET}" ] && mariadb --protocol=SOCKET -S "${DB_SOCKET}" -u "${DB_USER}" -p"${DB_PASSWORD}" "${DB_NAME}" -e "SELECT 1;" >/dev/null 2>&1 ); do
+        COUNT=$((COUNT + 1))
+        if [ ${COUNT} -ge ${MAX_RETRIES} ]; then
+            echo "ERROR: Database socket at ${DB_SOCKET} did not respond within ${MAX_RETRIES} retries."
+            exit 1
+        fi
+        echo "Waiting for MariaDB socket at ${DB_SOCKET}... (${COUNT}/${MAX_RETRIES})"
+        sleep 2
+    done
+    echo "==> Database socket reachable."
+    TABLE_COUNT=$(mariadb --protocol=SOCKET -S "${DB_SOCKET}" -u "${DB_USER}" -p"${DB_PASSWORD}" "${DB_NAME}" -sN -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = '${DB_NAME}';" 2>/dev/null || echo "0")
+else
+    echo "==> Checking database connection to ${DB_HOST}:${DB_PORT}..."
+    while ! nc -z -w 2 "${DB_HOST}" "${DB_PORT}" 2>/dev/null; do
+        COUNT=$((COUNT + 1))
+        if [ ${COUNT} -ge ${MAX_RETRIES} ]; then
+            echo "ERROR: Database at ${DB_HOST}:${DB_PORT} did not respond within ${MAX_RETRIES} seconds."
+            exit 1
+        fi
+        echo "Waiting for MariaDB at ${DB_HOST}:${DB_PORT}... (${COUNT}/${MAX_RETRIES})"
+        sleep 2
+    done
+    echo "==> Database reachable."
+    TABLE_COUNT=$(mariadb -h "${DB_HOST}" -P "${DB_PORT}" -u "${DB_USER}" -p"${DB_PASSWORD}" "${DB_NAME}" -sN -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = '${DB_NAME}';" 2>/dev/null || echo "0")
+fi
 
 # 5. Initialize database schema if needed (strictly within DB_NAME)
-TABLE_COUNT=$(mariadb -h "${DB_HOST}" -P "${DB_PORT}" -u "${DB_USER}" -p"${DB_PASSWORD}" "${DB_NAME}" -sN -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = '${DB_NAME}';" 2>/dev/null || echo "0")
 if [ "${TABLE_COUNT}" = "0" ] || [ -z "${TABLE_COUNT}" ]; then
     echo "==> Database '${DB_NAME}' has no tables. Running initial schema creation (gromox-dbop -CC)..."
     gromox-dbop -CC || {

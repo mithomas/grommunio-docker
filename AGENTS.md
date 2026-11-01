@@ -17,7 +17,7 @@ All functional verification checks performed during development are codified as 
 
 | Script | Test Scope | Verification Target |
 | :--- | :--- | :--- |
-| **`tests/test_services.py`** | Supervisor Process Monitoring | Verifies that all 14 background daemons inside the container report `RUNNING`. |
+| **`tests/test_services.py`** | Supervisor Process Monitoring | Verifies that all 13 background daemons inside the container report `RUNNING`. |
 | **`tests/test_endpoints.py`** | HTTP Ingress & Content-Types | Validates status codes, headers, and MIME types across Webmail (`:8080`), ActiveSync (`:8080`), Admin Web UI (`:8081`), `config.json` (`:8081`), Admin API status (`:8081`), and Rspamd Dashboard (`:11334`). |
 | **`tests/test_webmail_security.py`** | Webmail Root Ingress & Cookie Security | Validates Webmail delivery at root (`:8080`), absence of PHP configuration errors, `secure`/`HttpOnly` cookies, static assets, and runtime `session.cookie_secure = 1`. |
 | **`tests/test_admin_auth.py`** | Admin API & JWT Authentication | Tests login credential validation, JWT token issuance, cookie handling, and access to protected administrative endpoints. |
@@ -28,6 +28,7 @@ All functional verification checks performed during development are codified as 
 | **`tests/test_defaults.py`** | Mailbox Creation Defaults & Privileges | Validates that Admin API creation defaults (`/defaults/createParams`) reflect configured defaults (language, protocols, services, integrations, quotas). |
 | **`tests/test_ldap_config.py`** | Admin API LDAP Config & Persistence | Validates default group mapping population in `/system/mconf/ldap` and disk persistence without permission errors. |
 | **`tests/test_ldap.py`** | OpenLDAP & User Provisioning | Tests companion OpenLDAP (`:389`), Admin CLI connection (`ldap info`), user search, and user mailbox provisioning via `ldap downsync -c`. |
+| **`tests/test_db_socket.py`** | MariaDB Unix Socket & Exim Routing | Validates `DB_SOCKET` Unix socket connection handling and DB-free Exim primary/alias domain routing. |
 
 ### Running the Test Suite
 
@@ -49,6 +50,7 @@ python3 tests/test_monitoring_logs.py
 python3 tests/test_defaults.py
 python3 tests/test_ldap_config.py
 python3 tests/test_ldap.py
+python3 tests/test_db_socket.py
 ```
 
 ### Test Authoring Guidelines
@@ -85,13 +87,13 @@ python3 tests/test_ldap.py
    - Permissions allow `grommunio` (member of `Debian-exim`, `adm`, `gromox`) to read all service logs while maintaining read-only rootfs isolation.
 
 6. **Container Lifecycle & Health Monitoring:**
-   - **Healthcheck:** The container defines a `HEALTHCHECK` running `/usr/local/bin/container-healthcheck.sh` every 30s. It verifies that `supervisorctl` responds, all 14 background services report `RUNNING`, and the local webmail endpoint responds.
+   - **Healthcheck:** The container defines a `HEALTHCHECK` running `/usr/local/bin/container-healthcheck.sh` every 30s. It verifies that `supervisorctl` responds, all 13 background services report `RUNNING`, and the local webmail endpoint responds.
    - **Graceful Termination:** Configured with `STOPSIGNAL SIGTERM` and `stop_grace_period: 30s` in Docker Compose. This ensures Supervisor executes its ordered shutdown cascade (reverse priority from Nginx down to Redis), preventing MAPI/SQLite transaction interruption or Redis snapshot corruption.
 
 7. **Automated Builds & Docker Hub CI/CD Pipeline:**
    - The workflow `.github/workflows/build-and-publish.yml` executes on scheduled cron (`0 */6 * * *`), git push to `main`, tags (`v*`), pull requests, and manual `workflow_dispatch`.
    - **Docker Hub Overview Sync:** The workflow `.github/workflows/sync-dockerhub-readme.yml` automatically syncs `README.md` (along with the short description and completed GitHub URLs) to the Docker Hub repository overview whenever `README.md` is updated on `main` or triggered via `workflow_dispatch` (as well as during image publication in `build-and-publish.yml`). `README.md` must stay under Docker Hub's 25,000-byte limit.
    - **Upstream Change Detection:** Compares remote `debian:trixie-slim` digest and Grommunio Debian 13 repository packages SHA256 checksum against GitHub Actions cache, bypassing redundant builds when upstream dependencies have not changed.
-   - **Pre-Publication Gate:** Image builds for `linux/amd64` and starts the full test stack (`docker compose --profile test up -d`). Tests run via `python3 tests/run_all.py`. Publication to Docker Hub only proceeds if all 11 verification tests pass.
+   - **Pre-Publication Gate:** Image builds for `linux/amd64` and starts the full test stack (`docker compose --profile test up -d`). Tests run via `python3 tests/run_all.py`. Publication to Docker Hub only proceeds if all 12 verification tests pass.
    - **Image Tagging & OCI Labels:** Pushes `:latest`, `:<major>`, `:<minor>`, `:<patch>`, and `:<patch>-<timestamp>-<short-sha>` (e.g. `3.12.268-20261001-1339-<commit>`). Embeds OCI metadata labels (`org.opencontainers.image.*`) covering all core component versions (Gromox, Webmail, Z-Push, Admin API, Admin Web, Rspamd, Exim, Nginx, Redis, PHP, and Debian point release).
    - **Required Secrets:** `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`, and optional `DOCKERHUB_REPOSITORY` (defaults to `${DOCKERHUB_USERNAME}/grommunio-docker`).

@@ -32,6 +32,8 @@ services:
       - admin_api_data:/var/lib/grommunio-admin-api:rw
       - exim_spool:/var/spool/exim4:rw
       - log_data:/var/log:rw
+      # Optional: mount host mysqld directory when using DB_SOCKET=/run/mysqld/mysqld.sock
+      # - /run/mysqld:/run/mysqld:rw
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:

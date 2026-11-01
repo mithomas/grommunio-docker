@@ -21,7 +21,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     && if [ ! -f /usr/share/keyrings/download.grommunio.com.gpg ]; then \
          curl -fsSL https://download.grommunio.com/RPM-GPG-KEY-grommunio | gpg --dearmor -o /usr/share/keyrings/download.grommunio.com.gpg; \
        fi \
-    && echo "deb [signed-by=/usr/share/keyrings/download.grommunio.com.gpg] ${GROMMUNIO_REPO_URL} ${GROMMUNIO_REPO_SUITE} main" > /etc/apt/sources.list.d/grommunio.list
+    && echo "deb [signed-by=/usr/share/keyrings/download.grommunio.com.gpg] ${GROMMUNIO_REPO_URL} ${GROMMUNIO_REPO_SUITE} main" > /etc/apt/sources.list.d/grommunio.list \
+    && echo 'Acquire::CompressionTypes::uncompressed "."; Acquire::CompressionTypes::Order { "xz"; "uncompressed"; "gz"; };' > /etc/apt/apt.conf.d/99-grommunio-cdn
 
 # 2. Install Grommunio and supporting daemons
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \

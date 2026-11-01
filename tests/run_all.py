@@ -8,7 +8,7 @@ import os
 import sys
 
 TESTS = [
-    ("test_services.py", "Supervisor Services (All 14 Running)", False),
+    ("test_services.py", "Supervisor Services (All 13 Running)", False),
     ("test_endpoints.py", "HTTP Ingress Endpoints & Content-Types", False),
     ("test_admin_auth.py", "Grommunio Admin API & JWT Auth", False),
     ("test_rspamd_auth.py", "Rspamd Dashboard Dedicated Auth", False),
@@ -19,6 +19,7 @@ TESTS = [
     ("test_live_status.py", "Admin UI Live Status & Nginx VTS Telemetry", False),
     ("test_monitoring_logs.py", "Admin UI Monitoring Logs (Exim & Daemons)", False),
     ("test_defaults.py", "Mailbox Creation Defaults & Privileges", False),
+    ("test_db_socket.py", "MariaDB Unix Socket (DB_SOCKET) & Exim DB-Free Routing", False),
 ]
 
 def is_port_open(port=389, host="127.0.0.1"):
