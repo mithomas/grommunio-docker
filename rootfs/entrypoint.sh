@@ -74,22 +74,9 @@ if [ ! -f /var/lib/grommunio-admin-api/auth-private.pem ] || [ ! -f /var/lib/gro
     chown grommunio:grommunio /var/lib/grommunio-admin-api/auth-*.pem 2>/dev/null || true
 fi
 
-# Setup internal loopback bridge for grommunio-admin-api to Rspamd
-cat <<EOF > /run/nginx/internal-bridge.conf
-server {
-    listen 127.0.0.1:11336;
-    server_name localhost;
-
-    location / {
-        proxy_pass http://127.0.0.1:11335/;
-        proxy_set_header Password "${RSPAMD_PASSWORD}";
-    }
-}
-EOF
-
 # Generate Rspamd controller password hash
 if [ -n "${RSPAMD_PASSWORD}" ]; then
-    RSPAMD_HASH=$(rspamadm pw -p "${RSPAMD_PASSWORD}" 2>/dev/null || true)
+    RSPAMD_HASH=$(rspamadm pw -q --password="${RSPAMD_PASSWORD}" 2>/dev/null || rspamadm pw -p "${RSPAMD_PASSWORD}" 2>/dev/null || true)
     if [ -n "${RSPAMD_HASH}" ]; then
         echo "password = \"${RSPAMD_HASH}\";" > /run/rspamd/worker-controller-password.inc
         chmod 0640 /run/rspamd/worker-controller-password.inc 2>/dev/null || true
@@ -120,7 +107,20 @@ envsubst "${VAR_LIST}" < /etc/gromox.dist/event.cfg.template > /etc/gromox/event
 envsubst "${VAR_LIST}" < /etc/gromox.dist/timer.cfg.template > /etc/gromox/timer.cfg
 envsubst "${VAR_LIST}" < /etc/gromox.dist/midb.cfg.template > /etc/gromox/midb.cfg
 
-envsubst "${VAR_LIST}" < /etc/grommunio-admin-api.dist/database.yaml.template > /etc/grommunio-admin-api/conf.d/database.yaml
+python3 -c "
+import os, yaml
+config = {
+    'DB': {
+        'host': os.environ.get('DB_HOST', 'mariadb'),
+        'port': int(os.environ.get('DB_PORT') or 3306),
+        'user': os.environ.get('DB_USER', 'grommunio'),
+        'pass': os.environ.get('DB_PASSWORD', 'grommunio_secret'),
+        'database': os.environ.get('DB_NAME', 'grommunio')
+    }
+}
+with open('/etc/grommunio-admin-api/conf.d/database.yaml', 'w') as f:
+    yaml.dump(config, f, default_flow_style=False)
+"
 cp -f /etc/grommunio-admin-api.dist/uwsgi.ini /etc/grommunio-admin-api/conf.d/uwsgi.ini 2>/dev/null || true
 if [ -f /etc/grommunio-admin-api.dist/antispam.yaml ]; then
     cp -f /etc/grommunio-admin-api.dist/antispam.yaml /etc/grommunio-admin-api/conf.d/antispam.yaml 2>/dev/null || true
@@ -161,7 +161,7 @@ fi
 
 DB_ERR=""
 while true; do
-    if DB_ERR=$(mariadb "${MARIADB_CONN[@]}" -u "${DB_USER}" -p"${DB_PASSWORD}" "${DB_NAME}" -e "SELECT 1;" 2>&1 >/dev/null); then
+    if DB_ERR=$(MYSQL_PWD="${DB_PASSWORD}" mariadb "${MARIADB_CONN[@]}" -u "${DB_USER}" "${DB_NAME}" -e "SELECT 1;" 2>&1 >/dev/null); then
         break
     fi
     COUNT=$((COUNT + 1))
@@ -175,7 +175,7 @@ while true; do
 done
 echo "==> Database reachable and responsive."
 
-TABLE_COUNT=$(mariadb "${MARIADB_CONN[@]}" -u "${DB_USER}" -p"${DB_PASSWORD}" "${DB_NAME}" -sN -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = '${DB_NAME}';" 2>/dev/null || echo "0")
+TABLE_COUNT=$(MYSQL_PWD="${DB_PASSWORD}" mariadb "${MARIADB_CONN[@]}" -u "${DB_USER}" "${DB_NAME}" -sN -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = '${DB_NAME}';" 2>/dev/null || echo "0")
 
 # 5. Initialize database schema if needed (strictly within DB_NAME)
 if [ "${TABLE_COUNT}" = "0" ] || [ -z "${TABLE_COUNT}" ]; then
@@ -192,7 +192,7 @@ gromox-dbop -U || true
 # 6. Provision admin user password
 if [ -n "${ADMIN_PASSWORD}" ]; then
     echo "==> Setting initial admin password..."
-    echo "${ADMIN_PASSWORD}" | grommunio-admin passwd --password-stdin 2>/dev/null || true
+    printf '%s\n' "${ADMIN_PASSWORD}" | grommunio-admin passwd --password-stdin 2>/dev/null || true
 fi
 
 # 7. Set permissions across volumes and runtime paths

@@ -29,6 +29,7 @@ All functional verification checks performed during development are codified as 
 | **`tests/test_ldap_config.py`** | Admin API LDAP Config & Persistence | Validates default group mapping population in `/system/mconf/ldap` and disk persistence without permission errors. |
 | **`tests/test_ldap.py`** | OpenLDAP & User Provisioning | Tests companion OpenLDAP (`:389`), Admin CLI connection (`ldap info`), user search, and user mailbox provisioning via `ldap downsync -c`. |
 | **`tests/test_db_socket.py`** | MariaDB Unix Socket & Exim Routing | Validates `DB_SOCKET` Unix socket connection handling and DB-free Exim primary/alias domain routing. |
+| **`tests/test_password_escaping.py`** | Password Special Characters & Direct Controller Auth | Validates safe handling of passwords with special characters ($, #, ', ", \, ;), PyYAML escaping, printf shell safety, and direct Rspamd controller connectivity. |
 
 ### Running the Test Suite
 
@@ -51,6 +52,7 @@ python3 tests/test_defaults.py
 python3 tests/test_ldap_config.py
 python3 tests/test_ldap.py
 python3 tests/test_db_socket.py
+python3 tests/test_password_escaping.py
 ```
 
 ### Test Authoring Guidelines
@@ -77,9 +79,9 @@ python3 tests/test_db_socket.py
    - **Inbound:** Host Exim routes domain traffic to container Exim on port `2525`. Container Exim scans via Rspamd (`spamd_address = 127.0.0.1 11333 variant=rspamd`) and delivers via internal LMTP to Gromox on port `24`.
    - **Outbound:** Webmail and ActiveSync submit outbound messages to container Exim (`smtp://127.0.0.1:2525/`), which relays them to the host Exim smarthost (`smtp://${RELAY_HOST}:${RELAY_PORT}`).
 
-4. **Spam History Authenticated Loopback Bridge:**
-   - Nginx runs an internal listener on `127.0.0.1:11336` that injects `Password: ${RSPAMD_PASSWORD}`.
-   - `grommunio-admin-api` routes Rspamd requests to `http://127.0.0.1:11336`, allowing the Admin UI's **Spam History** tab to load authenticated scan logs without exposing the controller unauthenticated to external networks.
+4. **Spam History Direct Controller Integration:**
+   - `grommunio-admin-api` routes Rspamd requests directly to `http://127.0.0.1:11335`, authenticated automatically via Rspamd's `secure_ip = ["127.0.0.1", "::1"]`.
+   - External access via port `:11334` strictly requires `RSPAMD_PASSWORD`, while internal API communication bypasses password injection, avoiding escaping failures for arbitrary passwords.
 
 5. **File-Based Service Log Monitoring:**
    - In containerized Supervisord environments where `systemd-journald` is absent, `grommunio-admin-api` is enhanced with a dedicated `FileReader` registered with `@LogReader.register("file")` and automatic fallback in `JournaldReader`.
@@ -94,6 +96,6 @@ python3 tests/test_db_socket.py
    - The workflow `.github/workflows/build-and-publish.yml` executes on scheduled cron (`0 */6 * * *`), git push to `main`, tags (`v*`), pull requests, and manual `workflow_dispatch`.
    - **Docker Hub Overview Sync:** The workflow `.github/workflows/sync-dockerhub-readme.yml` automatically syncs `README.md` (along with the short description and completed GitHub URLs) to the Docker Hub repository overview whenever `README.md` is updated on `main` or triggered via `workflow_dispatch` (as well as during image publication in `build-and-publish.yml`). `README.md` must stay under Docker Hub's 25,000-byte limit.
    - **Upstream Change Detection:** Compares remote `debian:trixie-slim` digest and Grommunio Debian 13 repository packages SHA256 checksum against GitHub Actions cache, bypassing redundant builds when upstream dependencies have not changed.
-   - **Pre-Publication Gate:** Image builds for `linux/amd64` and starts the full test stack (`docker compose --profile test up -d`). Tests run via `python3 tests/run_all.py`. Publication to Docker Hub only proceeds if all 12 verification tests pass.
+   - **Pre-Publication Gate:** Image builds for `linux/amd64` and starts the full test stack (`docker compose --profile test up -d`). Tests run via `python3 tests/run_all.py`. Publication to Docker Hub only proceeds if all 13 verification tests pass.
    - **Image Tagging & OCI Labels:** Pushes `:latest`, `:<major>`, `:<minor>`, `:<patch>`, and `:<patch>-<timestamp>-<short-sha>` (e.g. `3.12.268-20261001-1339-<commit>`). Embeds OCI metadata labels (`org.opencontainers.image.*`) covering all core component versions (Gromox, Webmail, Z-Push, Admin API, Admin Web, Rspamd, Exim, Nginx, Redis, PHP, and Debian point release).
    - **Required Secrets:** `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`, and optional `DOCKERHUB_REPOSITORY` (defaults to `${DOCKERHUB_USERNAME}/grommunio-docker`).

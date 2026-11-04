@@ -38,7 +38,6 @@ Designed for seamless integration into existing infrastructure:
 |  |  :8081  /                            -> static admin-web HTML5 UI           |  |
 |  |         /api/                        -> uwsgi:/run/grommunio-admin-api/sock |  |
 |  |  :11334 /                            -> http://127.0.0.1:11335/ (Rspamd UI) |  |
-|  |  :11336 (Internal loopback bridge for Admin API -> Rspamd w/ password)      |  |
 |  +-----------------------------------------------------------------------------+  |
 |                                                                                   |
 |  +-- [ IN-CONTAINER EXIM MTA & ANTISPAM PIPELINE ] ----------------------------+  |
@@ -52,7 +51,7 @@ Designed for seamless integration into existing infrastructure:
 |  +-- [ APPLICATION WORKERS & DAEMONS (Managed by Supervisord) ] ---------------+  |
 |  |  * CONTAINER EXIM (MTA :2525, Rspamd spamd filter, internal LMTP transport) |  |
 |  |  * PHP-FPM POOL (Dynamic: 25 max workers for 10 EAS pings + 5 webmail users)|  |
-|  |  * GROMMUNIO ADMIN API (uWSGI: 2 workers, 2 threads, queries :11336)        |  |
+|  |  * GROMMUNIO ADMIN API (uWSGI: 2 workers, 2 threads, queries :11335 direct) |  |
 |  |  * GROMOX DAEMONS (http :10080, midb, zcore, event, delivery, delivery-queue) |  |
 |  |  * REDIS (Local cache & session store, maxmemory 128MB, volatile-lru)       |  |
 |  |  * RSPAMD (Antispam daemon, controller on 127.0.0.1:11335)                  |  |
@@ -150,6 +149,7 @@ chmod 600 .env.secrets
 **Secrets (`.env.secrets`):**
 - `DB_PASSWORD`: MariaDB user password (`DB_ROOT_PASSWORD` is only for `--profile test`; omit in production).
 - `ADMIN_PASSWORD`, `RSPAMD_PASSWORD`, `LDAP_BIND_PASS`: Admin UI, Rspamd dashboard, and LDAP bind passwords.
+- *Tip:* Enclose passwords with special characters (`$`, `#`, `'`, `"`, `\`) in single quotes (`'...'`) in `.env.secrets` to prevent Docker Compose variable expansion (`$MB`) and comment stripping (`#`). Escape internal single quotes as `\'`.
 
 ### 2. Pull or Build the Docker Image
 
@@ -319,10 +319,8 @@ docker compose exec grommunio /usr/local/bin/grommunio-bayes-sync.sh
 
 ### Synchronize Users from OpenLDAP
 
-> **Mailbox Auto-Creation Behavior:**
-> Mailboxes are **not** automatically created Just-In-Time (JIT) when an LDAP user logs in for the first time. Gromox requires user account records, routing metadata, and store directory paths to already exist in MariaDB before a user session can be authenticated. Gromox's LDAP adaptor functions strictly as an authentication backend (LDAP BIND) for accounts already registered in MariaDB.
->
-> To provision mailboxes for LDAP users, ensure the domain is created and execute LDAP synchronization (`downsync`):
+> **Mailbox Provisioning Note:**
+> Gromox validates credentials against LDAP but requires user records and mailbox stores in MariaDB before authentication succeeds. Synchronize LDAP accounts into MariaDB using `downsync`:
 
 1. Verify domain registration:
 ```bash
@@ -405,6 +403,7 @@ A standalone test suite validating all container services, endpoints, credential
 | **`tests/test_ldap_config.py`** | Validates default group mapping population in `/system/mconf/ldap` and disk persistence without permission errors. |
 | **`tests/test_ldap.py`** | Validates companion OpenLDAP (`:389`), directory search, and mailbox provisioning via `downsync`. |
 | **`tests/test_db_socket.py`** | Validates `DB_SOCKET` Unix socket connection handling and DB-free Exim primary/alias domain routing. |
+| **`tests/test_password_escaping.py`** | Validates passwords with special characters ($, #, ', ", \, ;) & direct Rspamd controller auth. |
 
 ### Run All Tests
 ```bash
@@ -428,7 +427,7 @@ Two GitHub Actions workflows automate container builds, integration testing, and
 ### Quality Gate (Integration Testing)
 Before any image is pushed to Docker Hub:
 - Docker Buildx builds the image for `linux/amd64` and starts the test stack (`docker compose --profile test up -d`).
-- Container health is verified via `/usr/local/bin/container-healthcheck.sh` and all 12 verification tests (`python3 tests/run_all.py`) run in CI.
+- Container health is verified via `/usr/local/bin/container-healthcheck.sh` and all 13 verification tests (`python3 tests/run_all.py`) run in CI.
 - Publication to Docker Hub only proceeds if 100% of tests pass.
 
 ### Image Tagging Convention

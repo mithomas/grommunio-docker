@@ -15,23 +15,11 @@ import json
 import os
 import sys
 
-def load_env_password():
-    password = os.environ.get("ADMIN_PASSWORD")
-    if password:
-        return password
-    for fname in (".env.secrets", ".env"):
-        env_file = os.path.join(os.path.dirname(__file__), "..", fname)
-        if os.path.exists(env_file):
-            with open(env_file, "r") as f:
-                for line in f:
-                    line = line.strip()
-                    if line.startswith("ADMIN_PASSWORD="):
-                        return line.split("=", 1)[1].strip().strip('"').strip("'")
-    return "admin_secret"
+from env_helper import load_env_secret
 
 def check_ldap_config():
     print("==> Checking Admin API LDAP configuration & disk persistence...")
-    admin_pw = load_env_password()
+    admin_pw = load_env_secret("ADMIN_PASSWORD", "admin_secret")
     login_url = "http://localhost:8081/api/v1/login"
 
     # Step 1: Authenticate and retrieve JWT + CSRF token

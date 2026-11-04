@@ -16,24 +16,12 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-
-def load_env_password():
-    password = os.environ.get("ADMIN_PASSWORD")
-    if password:
-        return password
-    for fname in (".env.secrets", ".env"):
-        env_path = os.path.join(os.path.dirname(__file__), "..", fname)
-        if os.path.exists(env_path):
-            with open(env_path, "r", encoding="utf-8") as f:
-                for line in f:
-                    if line.strip().startswith("ADMIN_PASSWORD="):
-                        return line.strip().split("=", 1)[1].strip("'\"")
-    return "admin_secret"
+from env_helper import load_env_secret
 
 
 def check_live_status():
     print("==> Checking Admin UI Live Status & Nginx VTS telemetry...")
-    admin_pw = load_env_password()
+    admin_pw = load_env_secret("ADMIN_PASSWORD", "admin_secret")
     login_url = "http://localhost:8081/api/v1/login"
 
     # Step 1: Authenticate to get grommunioAuthJwt

@@ -12,23 +12,11 @@ import json
 import os
 import sys
 
-def load_env_rspamd_password():
-    password = os.environ.get("RSPAMD_PASSWORD")
-    if password:
-        return password
-    for fname in (".env.secrets", ".env"):
-        env_file = os.path.join(os.path.dirname(__file__), "..", fname)
-        if os.path.exists(env_file):
-            with open(env_file, "r") as f:
-                for line in f:
-                    line = line.strip()
-                    if line.startswith("RSPAMD_PASSWORD="):
-                        return line.split("=", 1)[1].strip().strip('"').strip("'")
-    return "rspamd_secret"
+from env_helper import load_env_secret
 
 def check_rspamd_auth():
     print("==> [4/5] Checking dedicated Rspamd dashboard authentication (port 11334)...")
-    rspamd_pw = load_env_rspamd_password()
+    rspamd_pw = load_env_secret("RSPAMD_PASSWORD", "rspamd_secret")
     auth_url = "http://localhost:11334/auth"
 
     # Step 1: Unauthenticated request should be rejected

@@ -20,6 +20,7 @@ TESTS = [
     ("test_monitoring_logs.py", "Admin UI Monitoring Logs (Exim & Daemons)", False),
     ("test_defaults.py", "Mailbox Creation Defaults & Privileges", False),
     ("test_db_socket.py", "MariaDB Unix Socket (DB_SOCKET) & Exim DB-Free Routing", False),
+    ("test_password_escaping.py", "Password Special Characters & Direct Controller Auth", False),
 ]
 
 def is_port_open(port=389, host="127.0.0.1"):
