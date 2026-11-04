@@ -15,6 +15,7 @@
 
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -28,11 +29,40 @@ def str2bool(val, default=False):
     return str(val).strip().lower() in ("true", "1", "yes", "on")
 
 
-def str2int(val, default=0):
-    try:
-        return int(val)
-    except (TypeError, ValueError):
-        return default
+def parse_quota(val):
+    """
+    Parses quota values into integer Kilobytes (KiB) as expected by MAPI store properties
+    (storagequotalimit, prohibitsendquota, prohibitreceivequota).
+    Supports flexible human units (e.g. '10G', '10GB', '500M', '500MB', '1048576KB')
+    as well as plain integers.
+    Returns 0 for unlimited / disabled.
+    """
+    if val is None:
+        return 0
+    s = str(val).strip().lower()
+    if not s or s in ("0", "unlimited", "none", "off", "false"):
+        return 0
+
+    m = re.match(r"^([0-9]+(?:\.[0-9]+)?)\s*([a-z]*)$", s)
+    if not m:
+        try:
+            return int(float(s))
+        except ValueError:
+            return 0
+
+    num_str, unit = m.groups()
+    num = float(num_str)
+
+    if unit in ("g", "gb", "gib"):
+        return int(num * 1024 * 1024)
+    elif unit in ("m", "mb", "mib"):
+        return int(num * 1024)
+    elif unit in ("k", "kb", "kib", ""):
+        return int(num)
+    elif unit in ("t", "tb", "tib"):
+        return int(num * 1024 * 1024 * 1024)
+    else:
+        return int(num)
 
 
 def main():
@@ -49,9 +79,9 @@ def main():
     priv_archive = str2bool(os.environ.get("DEFAULT_USER_PRIV_ARCHIVE", "false"), False)
     chat_user = str2bool(os.environ.get("DEFAULT_USER_CREATE_CHAT_USER", "false"), False)
 
-    storage_quota = str2int(os.environ.get("DEFAULT_USER_STORAGE_QUOTA", "0"), 0)
-    send_quota = str2int(os.environ.get("DEFAULT_USER_SEND_QUOTA", "0"), 0)
-    receive_quota = str2int(os.environ.get("DEFAULT_USER_RECEIVE_QUOTA", "0"), 0)
+    storage_quota = parse_quota(os.environ.get("DEFAULT_USER_STORAGE_QUOTA", "0"))
+    send_quota = parse_quota(os.environ.get("DEFAULT_USER_SEND_QUOTA", "0"))
+    receive_quota = parse_quota(os.environ.get("DEFAULT_USER_RECEIVE_QUOTA", "0"))
 
     admin_pw = os.environ.get("ADMIN_PASSWORD", "admin_secret")
     # Admin API listens on fixed internal port 8081 in the container namespace
@@ -116,6 +146,9 @@ def main():
         "privFiles": priv_files,
         "privArchive": priv_archive,
         "chat": chat_user,
+        "storagequotalimit": storage_quota,
+        "prohibitsendquota": send_quota,
+        "prohibitreceivequota": receive_quota,
     }
 
     already_matches = all(user_defaults.get(k) == v for k, v in desired.items())
