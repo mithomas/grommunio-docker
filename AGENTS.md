@@ -34,6 +34,7 @@ All functional verification checks performed during development are codified as 
 | **`tests/test_db_init_safety.py`** | Database Init & Migration Fail-Safe Behavior | Validates MariaDB advisory locking (GET_LOCK), strict error-checked table counting, fail-fast schema initialization and migrations without success-shaped fallbacks, and safe admin password provisioning. |
 | **`tests/test_log_retention.py`** | Persistent Log Growth Bounding & 1-Year Retention | Validates weekly logrotate rules with 53 archives (371 days > 1 year), copytruncate write continuity, delaycompress Admin UI tail fallback, and low-disk healthcheck alerts. |
 | **`tests/test_mailbox_ownership.py`** | Mailbox Volume Ownership Optimization & Repair | Validates O(1) constant-time shallow ownership on /var/lib/gromox without recursive mailbox traversal, GROMOX_FIX_PERMISSIONS flag, and standalone repair script. |
+| **`tests/test_bayes_sync.py`** | Bayes Synchronization Engine & Scan Cost Reduction | Validates Python batched sync engine with SQLite ATTACH DATABASE, set-based differential queries, spam/ham/trash/expunge lifecycle transitions, retry resilience, and zero redundant process forks. |
 
 ### Running the Test Suite
 
@@ -61,6 +62,7 @@ python3 tests/test_port_configuration.py
 python3 tests/test_db_init_safety.py
 python3 tests/test_log_retention.py
 python3 tests/test_mailbox_ownership.py
+python3 tests/test_bayes_sync.py
 ```
 
 ### Test Authoring Guidelines
@@ -104,7 +106,7 @@ python3 tests/test_mailbox_ownership.py
    - The workflow `.github/workflows/build-and-publish.yml` executes on scheduled cron (`0 */6 * * *`), git push to `main`, tags (`v*`), pull requests, and manual `workflow_dispatch`.
    - **Docker Hub Overview Sync:** The workflow `.github/workflows/sync-dockerhub-readme.yml` automatically syncs `README.md` (along with the short description and completed GitHub URLs) to the Docker Hub repository overview whenever `README.md` is updated on `main` or triggered via `workflow_dispatch` (as well as during image publication in `build-and-publish.yml`). `README.md` must stay under Docker Hub's 25,000-byte limit.
    - **Upstream Change Detection:** Compares remote `debian:trixie-slim` digest and Grommunio Debian 13 repository packages SHA256 checksum against GitHub Actions cache, bypassing redundant builds when upstream dependencies have not changed.
-   - **Pre-Publication Gate:** Image builds for `linux/amd64` and starts the full test stack (`docker compose --profile test up -d`). Tests run via `python3 tests/run_all.py`. Publication to Docker Hub only proceeds if all 17 verification tests pass.
+   - **Pre-Publication Gate:** Image builds for `linux/amd64` and starts the full test stack (`docker compose --profile test up -d`). Tests run via `python3 tests/run_all.py`. Publication to Docker Hub only proceeds if all 18 verification tests pass.
    - **Image Tagging & OCI Labels:** Pushes `:latest`, `:<major>`, `:<minor>`, `:<patch>`, and `:<patch>-<timestamp>-<short-sha>` (e.g. `3.12.268-20261001-1339-<commit>`). Embeds OCI metadata labels (`org.opencontainers.image.*`) covering all core component versions (Gromox, Webmail, Z-Push, Admin API, Admin Web, Rspamd, Exim, Nginx, Redis, PHP, and Debian point release).
    - **Required Secrets:** `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`, and optional `DOCKERHUB_REPOSITORY` (defaults to `${DOCKERHUB_USERNAME}/grommunio-docker`).
 
@@ -128,3 +130,8 @@ python3 tests/test_mailbox_ownership.py
 11. **Constant-Time Mailbox Volume Ownership & On-Demand Repair:**
     - Startup logic applies constant-time ($O(1)$) shallow ownership to `/var/lib/gromox` and immediate subdirectories without recursively traversing user mailbox stores, keeping container start time under 5ms regardless of mailbox count or size.
     - A dedicated repair script (`/usr/local/bin/grommunio-fix-permissions.sh`) and opt-in environment flag (`GROMOX_FIX_PERMISSIONS=true`) provide on-demand recursive ownership restoration when migrating existing volumes or restoring external backups.
+
+12. **Batched Bayes Synchronization & Scan Cost Reduction:**
+    - Background Bayes training executes via `/usr/local/bin/grommunio-bayes-sync.py`, attaching each mailbox database (`exchange.sqlite3`) to `/var/lib/rspamd/bayes_learned.sqlite3` in a single transaction.
+    - Executes set-based differential queries, completely eliminating per-message subprocess forks and reducing steady-state scan cost to under 2ms per mailbox.
+    - Correctly handles spam learning (Junk `23`), ham learning on moves (Inbox `19`), trash pruning (Deleted Items `27`), expunge cleanup, and transient Rspamd connection failures.

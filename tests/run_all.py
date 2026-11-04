@@ -25,6 +25,7 @@ TESTS = [
     ("test_db_init_safety.py", "Database Init & Migration Fail-Safe Behavior", False),
     ("test_log_retention.py", "Persistent Log Growth Bounding & 1-Year Retention", False),
     ("test_mailbox_ownership.py", "Mailbox Volume Ownership Optimization & Repair", False),
+    ("test_bayes_sync.py", "Bayes Synchronization Engine & Scan Cost Reduction", False),
 ]
 
 from env_helper import get_bind_ip, get_ldap_port

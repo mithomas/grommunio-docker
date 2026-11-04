@@ -315,7 +315,7 @@ docker compose exec grommunio rspamc stat
 
 Trigger an immediate Bayes sync:
 ```bash
-docker compose exec grommunio /usr/local/bin/grommunio-bayes-sync.sh
+docker compose exec grommunio /usr/local/bin/grommunio-bayes-sync.py
 ```
 
 ### Check Storage & Log Volume Utilization
@@ -429,6 +429,7 @@ A standalone test suite validating all container services, endpoints, credential
 | **`tests/test_db_init_safety.py`** | Validates MariaDB advisory locking, error-checked table counting, and fail-fast schema ops. |
 | **`tests/test_log_retention.py`** | Validates 1-year log retention (53 weekly archives), copytruncate, and disk monitoring. |
 | **`tests/test_mailbox_ownership.py`** | Validates O(1) shallow ownership, GROMOX_FIX_PERMISSIONS, and repair script. |
+| **`tests/test_bayes_sync.py`** | Validates batched Bayes sync engine, spam/ham/trash transitions, and scan cost. |
 
 ### Run All Tests
 ```bash
@@ -452,7 +453,7 @@ Two GitHub Actions workflows automate container builds, integration testing, and
 ### Quality Gate (Integration Testing)
 Before any image is pushed to Docker Hub:
 - Docker Buildx builds the image for `linux/amd64` and starts the test stack (`docker compose --profile test up -d`).
-- Container health is verified via `/usr/local/bin/container-healthcheck.sh` and all 17 verification tests (`python3 tests/run_all.py`) run in CI.
+- Container health is verified via `/usr/local/bin/container-healthcheck.sh` and all 18 verification tests (`python3 tests/run_all.py`) run in CI.
 - Publication to Docker Hub only proceeds if 100% of tests pass.
 
 ### Image Tagging Convention
