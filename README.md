@@ -76,44 +76,14 @@ Designed for seamless integration into existing infrastructure:
 
 ## Pool Sizing & Resource Allocation (5 Users / 10 Devices)
 
-ActiveSync and groupware daemons have specific concurrency characteristics that differ from standard web applications. This configuration is tuned for **5 active users** with an aggregate of **10 ActiveSync devices** (phones, tablets, desktop clients):
+This configuration is tuned for **5 active users** and **10 ActiveSync devices** (phones, tablets, desktop clients):
 
-### 1. PHP-FPM Worker Pool
-* **ActiveSync Long-Polling (`PING` command):** Exchange ActiveSync devices hold HTTP connections open (heartbeats typically lasting between 15 and 30 minutes) waiting for server-side push notifications. Each connected device occupies an active PHP-FPM worker thread for the duration of its ping cycle.
-* **Sizing Formula:**
-  $$\text{max\_children} = (\text{EAS Devices} \times 1.5) + (\text{Webmail Concurrent Users} \times 2)$$
-  For 10 devices and 5 users: $15 + 10 = \mathbf{25\text{ workers}}$.
-* **Configured Pool Directives (`www.conf`):**
-  - `pm = dynamic`
-  - `pm.max_children = 25`: Ensures 10 devices can maintain continuous push pings simultaneously without queueing or blocking Webmail requests.
-  - `pm.start_servers = 4`: Initial warm workers.
-  - `pm.min_spare_servers = 2`: Minimum idle headroom.
-  - `pm.max_spare_servers = 8`: Maximum idle headroom during low-activity periods.
-  - `pm.max_requests = 1000`: Periodically recycles workers to prevent memory fragmentation.
-* **Memory Footprint:** Each PHP worker consumes ~25MB to 30MB of RAM. Baseline idle usage is ~100MB; worst-case peak with all 25 workers active is ~650MB to 750MB.
+- **PHP-FPM Worker Pool (`www.conf`):** `pm = dynamic`, `pm.max_children = 25` (handles EAS long-polling pings + concurrent Webmail requests), `pm.start_servers = 4`, `pm.min_spare_servers = 2`, `pm.max_spare_servers = 8`, `pm.max_requests = 1000`.
+- **Redis (`--maxmemory 128mb`):** `volatile-lru` eviction for sync locks and Bayes tokens (~30–60MB).
+- **Gromox Daemons:** Ingest concurrency up to 5 LDA threads and 50 client contexts (~180–250MB).
+- **Admin API (uWSGI):** 2 worker processes with 2 threads (~80MB).
 
-### 2. Redis Cache & State Store
-* **Role:** Stores transient ActiveSync push threads, device sync state locks, and Rspamd Bayes cache tokens.
-* **Tuning Parameters:**
-  - `--maxmemory 128mb`: Caps memory usage to prevent unbounded cache growth.
-  - `--maxmemory-policy volatile-lru`: Evicts expired or least-recently-used cache keys when memory limit is reached.
-* **Memory Footprint:** ~30MB to 60MB under typical load.
-
-### 3. Gromox Core Services
-* **Local Delivery Agent (`delivery.cfg`):**
-  - `work_threads_min = 1`
-  - `work_threads_max = 5`: Up to 5 parallel delivery threads can ingest incoming mail concurrently.
-* **LMTP Delivery Queue (`smtp.cfg`):**
-  - `lda_thread_init_num = 1`
-  - `lda_thread_charge_num = 20`: Maximum connections processed per worker thread.
-  - `context_num = 50`: Client context buffer pool.
-* **Memory Footprint:** The combined Gromox daemons (`http`, `midb`, `zcore`, `event`, `delivery`, `delivery-queue`) consume ~150MB to 250MB.
-
-### 4. Admin API (uWSGI)
-* **Configuration:** 2 worker processes with 2 threads (`processes = 2`, `threads = 2`).
-* **Memory Footprint:** ~80MB.
-
-### Total Container Footprint Summary
+### Memory Footprint Summary
 | Component | Idle / Baseline RAM | Peak / Active RAM |
 | :--- | :--- | :--- |
 | **PHP-FPM (25 workers max)** | ~100 MB | ~700 MB |
@@ -227,14 +197,12 @@ hostlist relay_from_hosts = 127.0.0.1 : 172.16.0.0/12
 #### Example Nginx Configuration
 
 ```nginx
-# Webmail & ActiveSync (mail.example.com)
+# Webmail & ActiveSync (mail.example.com -> :8080)
 server {
     listen 443 ssl http2;
     server_name mail.example.com;
-
     ssl_certificate /etc/letsencrypt/live/mail.example.com/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/mail.example.com/privkey.pem;
-
     client_max_body_size 128M;
 
     location / {
@@ -248,45 +216,8 @@ server {
     }
 }
 
-# Admin Web & API (admin.example.com)
-server {
-    listen 443 ssl http2;
-    server_name admin.example.com;
-
-    ssl_certificate /etc/letsencrypt/live/admin.example.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/admin.example.com/privkey.pem;
-
-    client_max_body_size 64M;
-
-    location / {
-        proxy_pass http://127.0.0.1:8081;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto https;
-        proxy_read_timeout 300s;
-    }
-}
-
-# Dedicated Rspamd Dashboard (antispam.example.com)
-server {
-    listen 443 ssl http2;
-    server_name antispam.example.com;
-
-    ssl_certificate /etc/letsencrypt/live/antispam.example.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/antispam.example.com/privkey.pem;
-
-    client_max_body_size 32M;
-
-    location / {
-        proxy_pass http://127.0.0.1:11334;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto https;
-        proxy_read_timeout 300s;
-    }
-}
+# Admin Web UI (admin.example.com -> :8081) & Rspamd (antispam.example.com -> :11334):
+# Follow the identical reverse proxy block above, targeting 127.0.0.1:8081 and 127.0.0.1:11334.
 ```
 
 ---
@@ -330,6 +261,21 @@ Normal startup enforces $O(1)$ shallow ownership on `/var/lib/gromox` without sc
 docker compose exec grommunio /usr/local/bin/grommunio-fix-permissions.sh
 ```
 *(Or set `GROMOX_FIX_PERMISSIONS=true` in `.env` for a single startup)*
+
+### Backup & Disaster Recovery
+For point-in-time consistency requirements, backup automation, and clean-host disaster recovery procedures, refer to the [**Backup & Disaster Recovery Playbook**](BACKUP_AND_RESTORE.md).
+
+Quick MariaDB & volume backup commands:
+```bash
+# Transactionally consistent database dump
+docker compose exec -T mariadb mariadb-dump -u root -p"${DB_ROOT_PASSWORD:-root_secret}" \
+  --single-transaction --quick --all-databases > mariadb_all.sql
+
+# Mailbox store volume archive
+docker compose stop grommunio
+tar -czf gromox_data.tar.gz -C /var/lib/docker/volumes/grommunio_gromox_data/_data .
+docker compose up -d grommunio
+```
 
 ### Log Rotation & 1-Year Retention Policy
 All application logs under `/var/log` are managed by in-container `logrotate` running via `grommunio-logrotate`:
@@ -466,23 +412,7 @@ Each published image is tagged with:
 - `:<git-tag>`: Preserved if triggered by a Git tag push (e.g. `v1.0.0`).
 
 ### OCI Image Metadata Labels
-Every published image is embedded with standard OCI labels (`org.opencontainers.image.*`) detailing the exact component versions bundled inside the build:
-
-| OCI Label Key | Content / Description |
-| :--- | :--- |
-| `org.opencontainers.image.created` | Build timestamp in RFC 3339 format |
-| `org.opencontainers.image.revision` | Full Git commit SHA |
-| `org.opencontainers.image.version.gromox` | Gromox core server version |
-| `org.opencontainers.image.version.webmail` | Grommunio Webmail version |
-| `org.opencontainers.image.version.zpush` | Grommunio Sync (ActiveSync / Z-Push) version |
-| `org.opencontainers.image.version.admin-api` | Grommunio Admin REST API version |
-| `org.opencontainers.image.version.admin-web` | Grommunio Admin Web UI version |
-| `org.opencontainers.image.version.rspamd` | Rspamd spam filter version |
-| `org.opencontainers.image.version.exim` | Exim4 MTA version |
-| `org.opencontainers.image.version.nginx` | Nginx web server version |
-| `org.opencontainers.image.version.redis` | Redis server version |
-| `org.opencontainers.image.version.php` | PHP runtime version |
-| `org.opencontainers.image.version.debian` | Debian base point release |
+Published images embed standard OCI labels (`org.opencontainers.image.*`) detailing component versions (`created`, `revision`, and `version.{gromox,webmail,zpush,admin-api,admin-web,rspamd,exim,nginx,redis,php,debian}`).
 
 Inspect labels on any local or pulled image:
 ```bash

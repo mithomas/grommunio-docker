@@ -135,3 +135,8 @@ python3 tests/test_bayes_sync.py
     - Background Bayes training executes via `/usr/local/bin/grommunio-bayes-sync.py`, attaching each mailbox database (`exchange.sqlite3`) to `/var/lib/rspamd/bayes_learned.sqlite3` in a single transaction.
     - Executes set-based differential queries, completely eliminating per-message subprocess forks and reducing steady-state scan cost to under 2ms per mailbox.
     - Correctly handles spam learning (Junk `23`), ham learning on moves (Inbox `19`), trash pruning (Deleted Items `27`), expunge cleanup, and transient Rspamd connection failures.
+
+13. **Backup, Disaster Recovery & Storage Consistency:**
+    - Operational backup procedures, storage inventory, and clean-host disaster recovery procedures are codified in `BACKUP_AND_RESTORE.md`.
+    - Transactional MariaDB dumps (`mariadb-dump --single-transaction --quick`) preserve ACID consistency while services run.
+    - Mailbox store recovery integrity is validated via `sqlite3 PRAGMA integrity_check;`, and post-restore ownership is restored via `/usr/local/bin/grommunio-fix-permissions.sh`.
