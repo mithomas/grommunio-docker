@@ -142,7 +142,7 @@ chmod 600 .env.secrets
 **Configuration (`.env`):**
 - `GROMMUNIO_HOST` & `GROMMUNIO_DOMAIN`: Primary hostname and mail domain (e.g. `mail.example.com`).
 - `DOMAINS`: Optional colon-separated secondary domains aliased to `GROMMUNIO_DOMAIN`.
-- `HTTP_PORT` (`8080`), `ADMIN_PORT` (`8081`), `RSPAMD_PORT` (`11334`), `SMTP_PORT` (`2525`): Exposed ingress ports.
+- `HTTP_PORT` (`8080`), `ADMIN_PORT` (`8081`), `RSPAMD_PORT` (`11334`), `SMTP_PORT` (`2525`), `LDAP_PORT` (`389`): Host ingress ports.
 - `DB_HOST` & `DB_PORT` **or** `DB_SOCKET`: MariaDB TCP endpoint or mounted Unix socket (`/run/mysqld/mysqld.sock`).
 - `DB_NAME`, `DB_USER`, `LDAP_HOST`, `LDAP_BIND_USER`, `LDAP_SEARCH_BASE`: Database and OpenLDAP settings.
 
@@ -391,19 +391,20 @@ A standalone test suite validating all container services, endpoints, credential
 
 | Test Script | Scope |
 | :--- | :--- |
-| **`tests/test_services.py`** | Asserts all 13 supervisor background processes report `RUNNING`. |
-| **`tests/test_endpoints.py`** | Validates HTTP status codes and content-types across ports `8080`, `8081`, and `11334`. |
-| **`tests/test_webmail_security.py`** | Validates Webmail root delivery (`:8080`), secure cookies, static assets, and absence of PHP errors. |
-| **`tests/test_admin_auth.py`** | Verifies Admin API authentication, JWT token generation, and protected endpoints. |
+| **`tests/test_services.py`** | Verifies all 13 supervisor daemons report `RUNNING`. |
+| **`tests/test_endpoints.py`** | Validates HTTP status codes and MIME types across `:8080`, `:8081`, and `:11334`. |
+| **`tests/test_webmail_security.py`** | Validates root Webmail delivery, secure cookies, static assets, and PHP runtime. |
+| **`tests/test_admin_auth.py`** | Verifies Admin API authentication, JWT issuance, and protected endpoints. |
 | **`tests/test_rspamd_auth.py`** | Verifies password protection on dedicated Rspamd dashboard (`:11334`). |
-| **`tests/test_mail_pipeline.py`** | End-to-end SMTP injection (`:2525`) -> Rspamd scan (`:11333`) -> Gromox LMTP (`:24`) -> Admin Spam History. |
-| **`tests/test_live_status.py`** | Validates Admin UI Live Status endpoint (`:8081`), VTS telemetry, and hop-by-hop header filtering. |
-| **`tests/test_monitoring_logs.py`** | Validates Admin UI Monitoring logs (`:8081`), file-based readers, and Exim log replacement for Postfix. |
-| **`tests/test_defaults.py`** | Validates Admin UI mailbox creation defaults (`:8081`), language, protocols, services, integrations, and quotas. |
-| **`tests/test_ldap_config.py`** | Validates default group mapping population in `/system/mconf/ldap` and disk persistence without permission errors. |
-| **`tests/test_ldap.py`** | Validates companion OpenLDAP (`:389`), directory search, and mailbox provisioning via `downsync`. |
-| **`tests/test_db_socket.py`** | Validates `DB_SOCKET` Unix socket connection handling and DB-free Exim primary/alias domain routing. |
-| **`tests/test_password_escaping.py`** | Validates passwords with special characters ($, #, ', ", \, ;) & direct Rspamd controller auth. |
+| **`tests/test_mail_pipeline.py`** | End-to-end SMTP injection (`:2525`) -> Rspamd (`:11333`) -> LMTP (`:24`) -> Spam History. |
+| **`tests/test_live_status.py`** | Validates Admin UI Live Status (`:8081`), VTS telemetry, and hop-by-hop sanitization. |
+| **`tests/test_monitoring_logs.py`** | Validates Admin UI Monitoring logs (`:8081`), file readers, and Exim log replacement. |
+| **`tests/test_defaults.py`** | Validates Admin UI mailbox creation defaults (`:8081`), language, protocols, and quotas. |
+| **`tests/test_ldap_config.py`** | Validates default group mapping in `/system/mconf/ldap` and disk persistence. |
+| **`tests/test_ldap.py`** | Validates companion OpenLDAP (`:389`), directory search, and user mailbox downsync. |
+| **`tests/test_db_socket.py`** | Validates `DB_SOCKET` Unix socket handling and DB-free Exim domain routing. |
+| **`tests/test_password_escaping.py`** | Validates passwords with special characters ($, #, ', ", \, ;) & direct controller auth. |
+| **`tests/test_port_configuration.py`** | Validates host port decoupling, companion DB routing, and dynamic test suite ports. |
 
 ### Run All Tests
 ```bash
@@ -427,7 +428,7 @@ Two GitHub Actions workflows automate container builds, integration testing, and
 ### Quality Gate (Integration Testing)
 Before any image is pushed to Docker Hub:
 - Docker Buildx builds the image for `linux/amd64` and starts the test stack (`docker compose --profile test up -d`).
-- Container health is verified via `/usr/local/bin/container-healthcheck.sh` and all 13 verification tests (`python3 tests/run_all.py`) run in CI.
+- Container health is verified via `/usr/local/bin/container-healthcheck.sh` and all 14 verification tests (`python3 tests/run_all.py`) run in CI.
 - Publication to Docker Hub only proceeds if 100% of tests pass.
 
 ### Image Tagging Convention

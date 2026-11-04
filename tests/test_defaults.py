@@ -15,13 +15,13 @@ import sys
 import urllib.parse
 import urllib.request
 
-from env_helper import load_env_secret
+from env_helper import get_admin_port, load_env_secret
 
 
 def check_defaults():
     print("==> Checking Mailbox Creation Defaults & Privileges...")
     admin_pw = load_env_secret("ADMIN_PASSWORD", "admin_secret")
-    admin_port = os.environ.get("ADMIN_PORT", "8081")
+    admin_port = get_admin_port()
     login_url = f"http://localhost:{admin_port}/api/v1/login"
     defaults_url = f"http://localhost:{admin_port}/api/v1/defaults/createParams"
 

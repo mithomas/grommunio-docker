@@ -25,13 +25,16 @@ from email.mime.text import MIMEText
 
 PRECTIME_REGEX = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{1,6}$")
 
-from env_helper import load_env_secret
+from env_helper import get_admin_port, get_bind_ip, get_smtp_port, load_env_secret
 
 
 def check_monitoring_logs():
+    admin_port = get_admin_port()
+    smtp_port = get_smtp_port()
+    bind_ip = get_bind_ip()
     print("==> Checking Admin UI Monitoring Logs (Exim & Service Log Monitoring)...")
     admin_pw = load_env_secret("ADMIN_PASSWORD", "admin_secret")
-    login_url = "http://localhost:8081/api/v1/login"
+    login_url = f"http://localhost:{admin_port}/api/v1/login"
 
     # Step 1: Authenticate to Admin API
     login_data = urllib.parse.urlencode({"user": "admin", "pass": admin_pw}).encode()
@@ -56,7 +59,7 @@ def check_monitoring_logs():
     auth_headers = {"Cookie": f"grommunioAuthJwt={token}"}
 
     # Step 2: Query /api/v1/system/logs
-    logs_url = "http://localhost:8081/api/v1/system/logs"
+    logs_url = f"http://localhost:{admin_port}/api/v1/system/logs"
     try:
         req = urllib.request.Request(logs_url, headers=auth_headers)
         with urllib.request.urlopen(req, timeout=10) as resp:
@@ -76,7 +79,7 @@ def check_monitoring_logs():
         return False
     print("    [+] Confirmed 'Postfix' is absent from available logs.")
 
-    # Step 3: Inject test email into Exim (port 2525) to generate log activity
+    # Step 3: Inject test email into Exim to generate log activity
     test_subj = f"Log Verification Test {int(time.time())}"
     msg = MIMEText("Testing Exim log monitoring integration.")
     msg["Subject"] = test_subj
@@ -84,9 +87,9 @@ def check_monitoring_logs():
     msg["To"] = "testuser@example.com"
 
     try:
-        with smtplib.SMTP("127.0.0.1", 2525, timeout=10) as smtp:
+        with smtplib.SMTP(bind_ip, smtp_port, timeout=10) as smtp:
             smtp.sendmail("logcheck@external.example", ["testuser@example.com"], msg.as_string())
-        print(f"    [+] Sent test email via Exim port 2525 ('{test_subj}').")
+        print(f"    [+] Sent test email via Exim port {smtp_port} ('{test_subj}').")
     except Exception as exc:
         print(f"    [-] SMTP injection failed: {exc}", file=sys.stderr)
         return False
@@ -94,7 +97,7 @@ def check_monitoring_logs():
     time.sleep(1)
 
     # Step 4: Query Exim log endpoint
-    exim_url = "http://localhost:8081/api/v1/system/logs/Exim?n=20"
+    exim_url = f"http://localhost:{admin_port}/api/v1/system/logs/Exim?n=20"
     try:
         req = urllib.request.Request(exim_url, headers=auth_headers)
         with urllib.request.urlopen(req, timeout=10) as resp:
@@ -130,7 +133,7 @@ def check_monitoring_logs():
 
     # Step 5: Test 'after' filtering
     first_time = exim_entries[0]["time"]
-    after_url = f"http://localhost:8081/api/v1/system/logs/Exim?after={urllib.parse.quote(first_time)}"
+    after_url = f"http://localhost:{admin_port}/api/v1/system/logs/Exim?after={urllib.parse.quote(first_time)}"
     try:
         req = urllib.request.Request(after_url, headers=auth_headers)
         with urllib.request.urlopen(req, timeout=10) as resp:
@@ -143,7 +146,7 @@ def check_monitoring_logs():
     # Step 6: Verify other key daemons
     daemons_to_check = ["Antispam", "Gromox http", "Gromox delivery", "Admin API", "Nginx"]
     for daemon in daemons_to_check:
-        url = f"http://localhost:8081/api/v1/system/logs/{urllib.parse.quote(daemon)}?n=5"
+        url = f"http://localhost:{admin_port}/api/v1/system/logs/{urllib.parse.quote(daemon)}?n=5"
         try:
             req = urllib.request.Request(url, headers=auth_headers)
             with urllib.request.urlopen(req, timeout=10) as resp:

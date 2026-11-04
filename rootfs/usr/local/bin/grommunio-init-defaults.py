@@ -54,8 +54,8 @@ def main():
     receive_quota = str2int(os.environ.get("DEFAULT_USER_RECEIVE_QUOTA", "0"), 0)
 
     admin_pw = os.environ.get("ADMIN_PASSWORD", "admin_secret")
-    admin_port = os.environ.get("ADMIN_PORT", "8081")
-    api_base = f"http://127.0.0.1:{admin_port}/api/v1"
+    # Admin API listens on fixed internal port 8081 in the container namespace
+    api_base = "http://127.0.0.1:8081/api/v1"
 
     # Step 1: Wait for Admin API to become reachable
     max_wait = 90

@@ -16,13 +16,15 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from env_helper import load_env_secret
+from env_helper import get_admin_port, get_http_port, load_env_secret
 
 
 def check_live_status():
+    admin_port = get_admin_port()
+    http_port = get_http_port()
     print("==> Checking Admin UI Live Status & Nginx VTS telemetry...")
     admin_pw = load_env_secret("ADMIN_PASSWORD", "admin_secret")
-    login_url = "http://localhost:8081/api/v1/login"
+    login_url = f"http://localhost:{admin_port}/api/v1/login"
 
     # Step 1: Authenticate to get grommunioAuthJwt
     login_data = urllib.parse.urlencode({"user": "admin", "pass": admin_pw}).encode()
@@ -50,7 +52,7 @@ def check_live_status():
     }
 
     # Step 2: Query vhost list endpoint
-    list_url = "http://localhost:8081/api/v1/system/vhostStatus"
+    list_url = f"http://localhost:{admin_port}/api/v1/system/vhostStatus"
     list_req = urllib.request.Request(list_url, headers=auth_headers)
     try:
         with urllib.request.urlopen(list_req, timeout=10) as resp:
@@ -68,7 +70,7 @@ def check_live_status():
         return False
 
     # Step 3: Query vhostStatus/local endpoint (Live Status page data)
-    status_url = "http://localhost:8081/api/v1/system/vhostStatus/local"
+    status_url = f"http://localhost:{admin_port}/api/v1/system/vhostStatus/local"
     status_req = urllib.request.Request(status_url, headers=auth_headers)
     try:
         with urllib.request.urlopen(status_req, timeout=10) as resp:
@@ -107,7 +109,7 @@ def check_live_status():
 
     # Step 5: Verify access control on direct /statusmonitor
     # External direct requests from outside the container must be rejected with HTTP 403 Forbidden
-    sm_url = "http://localhost:8080/statusmonitor"
+    sm_url = f"http://localhost:{http_port}/statusmonitor"
     sm_req = urllib.request.Request(sm_url, headers={"User-Agent": "GrommunioLiveStatusTest/1.0"})
     try:
         with urllib.request.urlopen(sm_req, timeout=10) as resp:

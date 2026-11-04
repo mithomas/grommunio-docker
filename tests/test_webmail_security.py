@@ -19,15 +19,19 @@ Validates:
    - Submitting logon with Origin: http://localhost:8080 succeeds (HTTP 303 redirect)
    - Untrusted cross-origin requests (Origin: http://evil.com) are rejected with HTTP 403
 """
-import urllib.request
-import urllib.parse
-import urllib.error
 import subprocess
 import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+
+from env_helper import get_http_port
 
 def check_webmail_root_ingress():
-    print("==> Checking Webmail Root Ingress (http://localhost:8080/)...")
-    url = "http://localhost:8080/"
+    http_port = get_http_port()
+    base_url = f"http://localhost:{http_port}"
+    print(f"==> Checking Webmail Root Ingress ({base_url}/)...")
+    url = f"{base_url}/"
     req = urllib.request.Request(url, headers={"User-Agent": "GrommunioTest/1.0"})
 
     try:
@@ -82,8 +86,8 @@ def check_webmail_root_ingress():
 
     # 4. Static assets loading
     asset_urls = [
-        ("Favicon", "http://localhost:8080/client/resources/images/favicon.ico", "image/x-icon"),
-        ("Login CSS", "http://localhost:8080/client/resources/css/external/login.css", "text/css"),
+        ("Favicon", f"{base_url}/client/resources/images/favicon.ico", "image/x-icon"),
+        ("Login CSS", f"{base_url}/client/resources/css/external/login.css", "text/css"),
     ]
     for name, asset_url, expected_ct in asset_urls:
         asset_req = urllib.request.Request(asset_url, headers={"User-Agent": "GrommunioTest/1.0"})
@@ -113,7 +117,7 @@ def check_webmail_root_ingress():
         return False
 
     # 6. Webmail logon with Origin header (verifies FastCGI origin normalization and CSRF acceptance)
-    logon_url = "http://localhost:8080/?logon"
+    logon_url = f"{base_url}/?logon"
     post_data = urllib.parse.urlencode({"username": "testuser", "password": "testuser_secret"}).encode("utf-8")
 
     class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -126,7 +130,7 @@ def check_webmail_root_ingress():
         data=post_data,
         headers={
             "User-Agent": "GrommunioTest/1.0",
-            "Origin": "http://localhost:8080",
+            "Origin": base_url,
             "Content-Type": "application/x-www-form-urlencoded",
         },
     )
@@ -135,13 +139,13 @@ def check_webmail_root_ingress():
         if resp.status not in (200, 303):
             print(f"    [-] Logon with Origin header returned unexpected status {resp.status}", file=sys.stderr)
             return False
-        print(f"    [+] Logon with Origin header ('http://localhost:8080') succeeded (HTTP {resp.status}).")
+        print(f"    [+] Logon with Origin header ('{base_url}') succeeded (HTTP {resp.status}).")
 
         # 6b. Verify authenticated root access with session cookies (prevents MAPI / exmdb port 5000 HTTP 500 regression)
         set_cookies = resp.headers.get_all("Set-Cookie") or []
         cookie_header = "; ".join([c.split(";")[0] for c in set_cookies])
         auth_req = urllib.request.Request(
-            "http://localhost:8080/",
+            f"{base_url}/",
             headers={
                 "User-Agent": "GrommunioTest/1.0",
                 "Cookie": cookie_header,

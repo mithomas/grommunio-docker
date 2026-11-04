@@ -6,59 +6,68 @@ Validates HTTP responses, status codes, and Content-Types across all container p
 - Port 8081: Admin Web UI (/), /config.json, and Admin API status (/api/v1/status)
 - Port 11334: Dedicated Rspamd Dashboard (/)
 """
-import urllib.request
-import urllib.error
 import json
-import time
 import sys
+import time
+import urllib.error
+import urllib.request
 
-ENDPOINTS = [
-    {
-        "name": "Webmail Interface",
-        "url": "http://localhost:8080/",
-        "expected_status": 200,
-        "content_type_contains": "text/html",
-    },
-    {
-        "name": "ActiveSync (EAS Challenge)",
-        "url": "http://localhost:8080/Microsoft-Server-ActiveSync",
-        "expected_status": 401,
-        "content_type_contains": "text/html",
-        "expected_header": ("WWW-Authenticate", "Basic realm=\"GSync\""),
-    },
-    {
-        "name": "Admin Web UI HTML",
-        "url": "http://localhost:8081/",
-        "expected_status": 200,
-        "content_type_contains": "text/html",
-    },
-    {
-        "name": "Admin config.json",
-        "url": "http://localhost:8081/config.json",
-        "expected_status": 200,
-        "content_type_contains": "application/json",
-        "validate_json": True,
-    },
-    {
-        "name": "Admin API Operational Status",
-        "url": "http://localhost:8081/api/v1/status",
-        "expected_status": 200,
-        "content_type_contains": "application/json",
-        "validate_json": True,
-    },
-    {
-        "name": "Dedicated Rspamd Web Interface",
-        "url": "http://localhost:11334/",
-        "expected_status": 200,
-        "content_type_contains": "text/html",
-    },
-]
+from env_helper import get_admin_port, get_http_port, get_rspamd_port
+
+
+def get_endpoints():
+    http_port = get_http_port()
+    admin_port = get_admin_port()
+    rspamd_port = get_rspamd_port()
+
+    return [
+        {
+            "name": "Webmail Interface",
+            "url": f"http://localhost:{http_port}/",
+            "expected_status": 200,
+            "content_type_contains": "text/html",
+        },
+        {
+            "name": "ActiveSync (EAS Challenge)",
+            "url": f"http://localhost:{http_port}/Microsoft-Server-ActiveSync",
+            "expected_status": 401,
+            "content_type_contains": "text/html",
+            "expected_header": ("WWW-Authenticate", 'Basic realm="GSync"'),
+        },
+        {
+            "name": "Admin Web UI HTML",
+            "url": f"http://localhost:{admin_port}/",
+            "expected_status": 200,
+            "content_type_contains": "text/html",
+        },
+        {
+            "name": "Admin config.json",
+            "url": f"http://localhost:{admin_port}/config.json",
+            "expected_status": 200,
+            "content_type_contains": "application/json",
+            "validate_json": True,
+        },
+        {
+            "name": "Admin API Operational Status",
+            "url": f"http://localhost:{admin_port}/api/v1/status",
+            "expected_status": 200,
+            "content_type_contains": "application/json",
+            "validate_json": True,
+        },
+        {
+            "name": "Dedicated Rspamd Web Interface",
+            "url": f"http://localhost:{rspamd_port}/",
+            "expected_status": 200,
+            "content_type_contains": "text/html",
+        },
+    ]
+
 
 def check_endpoints():
     print("==> [2/5] Checking HTTP ingress endpoints...")
     all_ok = True
 
-    for ep in ENDPOINTS:
+    for ep in get_endpoints():
         name = ep["name"]
         url = ep["url"]
         expected_code = ep["expected_status"]

@@ -14,12 +14,13 @@ import json
 import os
 import sys
 
-from env_helper import load_env_secret
+from env_helper import get_admin_port, load_env_secret
 
 def check_admin_auth():
     print("==> [3/5] Checking Admin API authentication...")
     admin_pw = load_env_secret("ADMIN_PASSWORD", "admin_secret")
-    login_url = "http://localhost:8081/api/v1/login"
+    admin_port = get_admin_port()
+    login_url = f"http://localhost:{admin_port}/api/v1/login"
 
     # Step 1: Verify rejection of invalid credentials
     bad_data = urllib.parse.urlencode({"user": "admin", "pass": "invalid_wrong_pw"}).encode()
@@ -59,7 +60,7 @@ def check_admin_auth():
         return False
 
     # Step 3: Access protected endpoint using JWT cookie
-    prot_url = "http://localhost:8081/api/v1/domains"
+    prot_url = f"http://localhost:{admin_port}/api/v1/domains"
     req_prot = urllib.request.Request(
         prot_url,
         headers={"Cookie": f"grommunioAuthJwt={token}"}

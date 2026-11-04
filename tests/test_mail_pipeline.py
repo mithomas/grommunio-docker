@@ -17,37 +17,40 @@ import time
 import os
 import sys
 
-from env_helper import load_env_secret
+from env_helper import get_admin_port, get_bind_ip, get_smtp_port, load_env_secret
 
 def check_mail_pipeline():
+    smtp_port = get_smtp_port()
+    admin_port = get_admin_port()
+    bind_ip = get_bind_ip()
     print("==> [5/5] Checking Mail Pipeline & Spam History population...")
     timestamp = int(time.time())
     subject = f"Verification Test Email - {timestamp}"
     admin_pw = load_env_secret("ADMIN_PASSWORD", "admin_secret")
 
-    # Step 1: Send email via SMTP to container Exim on port 2525
+    # Step 1: Send email via SMTP to container Exim on host-mapped port
     msg = MIMEText(f"This is an automated verification email sent at {timestamp} to test Rspamd scanning and Spam History logging.")
     msg["Subject"] = subject
     msg["From"] = f"verifier-{timestamp}@external.example"
     msg["To"] = "test@example.com"
 
     try:
-        with smtplib.SMTP("127.0.0.1", 2525, timeout=10) as client:
+        with smtplib.SMTP(bind_ip, smtp_port, timeout=10) as client:
             code, resp = client.ehlo()
             if code != 250:
-                print(f"    [-] EHLO to port 2525 failed: {code} {resp}", file=sys.stderr)
+                print(f"    [-] EHLO to port {smtp_port} failed: {code} {resp}", file=sys.stderr)
                 return False
             client.sendmail(msg["From"], [msg["To"]], msg.as_string())
-            print(f"    [+] Injected test message into container Exim on port 2525.")
+            print(f"    [+] Injected test message into container Exim on port {smtp_port}.")
     except Exception as ex:
-        print(f"    [-] SMTP delivery to port 2525 failed: {ex}", file=sys.stderr)
+        print(f"    [-] SMTP delivery to port {smtp_port} failed: {ex}", file=sys.stderr)
         return False
 
     # Allow a moment for Exim to scan and deliver
     time.sleep(1.5)
 
     # Step 2: Authenticate to Admin API
-    login_url = "http://localhost:8081/api/v1/login"
+    login_url = f"http://localhost:{admin_port}/api/v1/login"
     login_payload = urllib.parse.urlencode({"user": "admin", "pass": admin_pw}).encode()
     try:
         req_login = urllib.request.Request(
@@ -62,7 +65,7 @@ def check_mail_pipeline():
         return False
 
     # Step 3: Fetch Spam History from Admin API
-    hist_url = "http://localhost:8081/api/v1/system/antispam/history"
+    hist_url = f"http://localhost:{admin_port}/api/v1/system/antispam/history"
     try:
         req_hist = urllib.request.Request(
             hist_url,

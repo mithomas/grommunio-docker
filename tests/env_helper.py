@@ -54,3 +54,34 @@ def load_env_secret(var_name: str, default: str = "") -> str:
                 pass
 
     return default
+
+
+def get_http_port() -> int:
+    """Returns the host-mapped HTTP port for Webmail and ActiveSync (default: 8080)."""
+    return int(load_env_secret("HTTP_PORT", "8080"))
+
+
+def get_admin_port() -> int:
+    """Returns the host-mapped Admin UI and API port (default: 8081)."""
+    return int(load_env_secret("ADMIN_PORT", "8081"))
+
+
+def get_rspamd_port() -> int:
+    """Returns the host-mapped dedicated Rspamd dashboard port (default: 11334)."""
+    return int(load_env_secret("RSPAMD_PORT", "11334"))
+
+
+def get_smtp_port() -> int:
+    """Returns the host-mapped SMTP port for Exim inbound delivery (default: 2525)."""
+    return int(load_env_secret("SMTP_PORT", "2525"))
+
+
+def get_ldap_port() -> int:
+    """Returns the host-mapped LDAP port for companion OpenLDAP (default: 389)."""
+    return int(load_env_secret("LDAP_PORT", "389"))
+
+
+def get_bind_ip() -> str:
+    """Returns the interface IP the ports are bound to (default: 127.0.0.1)."""
+    return load_env_secret("BIND_IP", "127.0.0.1")
+

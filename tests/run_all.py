@@ -21,10 +21,17 @@ TESTS = [
     ("test_defaults.py", "Mailbox Creation Defaults & Privileges", False),
     ("test_db_socket.py", "MariaDB Unix Socket (DB_SOCKET) & Exim DB-Free Routing", False),
     ("test_password_escaping.py", "Password Special Characters & Direct Controller Auth", False),
+    ("test_port_configuration.py", "Dedicated Host Port Mapping Decoupling", False),
 ]
 
-def is_port_open(port=389, host="127.0.0.1"):
+from env_helper import get_bind_ip, get_ldap_port
+
+def is_port_open(port=None, host=None):
     import socket
+    if port is None:
+        port = get_ldap_port()
+    if host is None:
+        host = get_bind_ip()
     try:
         with socket.create_connection((host, port), timeout=1.0):
             return True
@@ -44,8 +51,9 @@ def main():
         description = item[1]
         is_optional = item[2] if len(item) > 2 else False
 
-        if script == "test_ldap.py" and not is_port_open(389):
-            print(f"[-] Skipping {script} (OpenLDAP companion service port 389 not listening)\n")
+        if script == "test_ldap.py" and not is_port_open():
+            ldap_p = get_ldap_port()
+            print(f"[-] Skipping {script} (OpenLDAP companion service port {ldap_p} not listening)\n")
             results.append((script, description, "SKIPPED"))
             continue
 

@@ -12,12 +12,13 @@ import json
 import os
 import sys
 
-from env_helper import load_env_secret
+from env_helper import get_rspamd_port, load_env_secret
 
 def check_rspamd_auth():
-    print("==> [4/5] Checking dedicated Rspamd dashboard authentication (port 11334)...")
+    rspamd_port = get_rspamd_port()
+    print(f"==> [4/5] Checking dedicated Rspamd dashboard authentication (port {rspamd_port})...")
     rspamd_pw = load_env_secret("RSPAMD_PASSWORD", "rspamd_secret")
-    auth_url = "http://localhost:11334/auth"
+    auth_url = f"http://localhost:{rspamd_port}/auth"
 
     # Step 1: Unauthenticated request should be rejected
     req_bad = urllib.request.Request(auth_url, data=b"", headers={"Password": "wrong_password"})
@@ -51,7 +52,7 @@ def check_rspamd_auth():
         return False
 
     # Step 3: Query /stat endpoint with authentication
-    stat_url = "http://localhost:11334/stat"
+    stat_url = f"http://localhost:{rspamd_port}/stat"
     req_stat = urllib.request.Request(stat_url, headers={"Password": rspamd_pw})
     try:
         with urllib.request.urlopen(req_stat) as resp:

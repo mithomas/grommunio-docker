@@ -15,12 +15,13 @@ import json
 import os
 import sys
 
-from env_helper import load_env_secret
+from env_helper import get_admin_port, load_env_secret
 
 def check_ldap_config():
+    admin_port = get_admin_port()
     print("==> Checking Admin API LDAP configuration & disk persistence...")
     admin_pw = load_env_secret("ADMIN_PASSWORD", "admin_secret")
-    login_url = "http://localhost:8081/api/v1/login"
+    login_url = f"http://localhost:{admin_port}/api/v1/login"
 
     # Step 1: Authenticate and retrieve JWT + CSRF token
     login_data = urllib.parse.urlencode({"user": "admin", "pass": admin_pw}).encode()
@@ -43,7 +44,7 @@ def check_ldap_config():
         return False
 
     # Step 2: Fetch current LDAP configuration via GET /api/v1/system/mconf/ldap
-    get_url = "http://localhost:8081/api/v1/system/mconf/ldap"
+    get_url = f"http://localhost:{admin_port}/api/v1/system/mconf/ldap"
     req_get = urllib.request.Request(
         get_url,
         headers={"Cookie": f"grommunioAuthJwt={token}"}
@@ -74,7 +75,7 @@ def check_ldap_config():
         return False
 
     # Step 3: Perform PUT /api/v1/system/mconf/ldap?force=true (simulates Admin UI save)
-    put_url = "http://localhost:8081/api/v1/system/mconf/ldap?force=true"
+    put_url = f"http://localhost:{admin_port}/api/v1/system/mconf/ldap?force=true"
     req_put = urllib.request.Request(
         put_url,
         data=json.dumps(data).encode("utf-8"),

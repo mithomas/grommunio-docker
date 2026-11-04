@@ -7,11 +7,6 @@ echo "==> Initializing Grommunio container on Debian 13 (Trixie)..."
 export GROMMUNIO_HOST="${GROMMUNIO_HOST:-mail.example.com}"
 export GROMMUNIO_DOMAIN="${GROMMUNIO_DOMAIN:-example.com}"
 export DOMAINS="${DOMAINS:-}"
-export HTTP_PORT="${HTTP_PORT:-8080}"
-export ADMIN_PORT="${ADMIN_PORT:-8081}"
-export RSPAMD_PORT="${RSPAMD_PORT:-11334}"
-export SMTP_PORT="${SMTP_PORT:-2525}"
-export LMTP_PORT="${LMTP_PORT:-2524}"
 export BAYES_SYNC_INTERVAL="${BAYES_SYNC_INTERVAL:-300}"
 export RELAY_HOST="${RELAY_HOST:-host.docker.internal}"
 export RELAY_PORT="${RELAY_PORT:-25}"
@@ -23,6 +18,9 @@ export DB_USER="${DB_USER:-grommunio}"
 export DB_PASSWORD="${DB_PASSWORD:-grommunio_secret}"
 if [ -n "${DB_SOCKET}" ]; then
     export DB_HOST="localhost"
+elif [ "${DB_HOST}" = "mariadb" ] && [ "${DB_PORT}" != "3306" ]; then
+    echo "==> Companion MariaDB detected on internal network; using container port 3306 (DB_PORT=${DB_PORT} maps host ingress)..."
+    export DB_PORT="3306"
 fi
 export ADMIN_PASSWORD="${ADMIN_PASSWORD:-admin}"
 export RSPAMD_PASSWORD="${RSPAMD_PASSWORD:-rspamd_secret}"
@@ -94,7 +92,7 @@ if [ -d /etc/grommunio-admin-api.dist ]; then
 fi
 mkdir -p /etc/grommunio-admin-api/conf.d
 
-VAR_LIST='$GROMMUNIO_HOST $GROMMUNIO_DOMAIN $DOMAINS $HTTP_PORT $ADMIN_PORT $RSPAMD_PORT $SMTP_PORT $LMTP_PORT $RELAY_HOST $RELAY_PORT $DB_HOST $DB_PORT $DB_SOCKET $DB_NAME $DB_USER $DB_PASSWORD $ADMIN_PASSWORD $GROMOX_AUTH_BACKEND $LDAP_DISABLED $LDAP_HOST $LDAP_START_TLS $LDAP_BIND_USER $LDAP_BIND_PASS $LDAP_SEARCH_BASE $LDAP_USER_FILTER $LDAP_OBJECT_ID $LDAP_MAIL_ATTR $LDAP_USER_ALIASES $LDAP_USER_DISPLAYNAME $LDAP_USER_ALTNAME $LDAP_GROUP_MEMBER_ATTR $LDAP_GROUP_ADDR $LDAP_GROUP_FILTER $LDAP_GROUP_NAME'
+VAR_LIST='$GROMMUNIO_HOST $GROMMUNIO_DOMAIN $DOMAINS $RELAY_HOST $RELAY_PORT $DB_HOST $DB_PORT $DB_SOCKET $DB_NAME $DB_USER $DB_PASSWORD $ADMIN_PASSWORD $GROMOX_AUTH_BACKEND $LDAP_DISABLED $LDAP_HOST $LDAP_START_TLS $LDAP_BIND_USER $LDAP_BIND_PASS $LDAP_SEARCH_BASE $LDAP_USER_FILTER $LDAP_OBJECT_ID $LDAP_MAIL_ATTR $LDAP_USER_ALIASES $LDAP_USER_DISPLAYNAME $LDAP_USER_ALTNAME $LDAP_GROUP_MEMBER_ATTR $LDAP_GROUP_ADDR $LDAP_GROUP_FILTER $LDAP_GROUP_NAME'
 
 envsubst "${VAR_LIST}" < /etc/gromox.dist/gromox.cfg.template > /etc/gromox/gromox.cfg
 envsubst "${VAR_LIST}" < /etc/gromox.dist/smtp.cfg.template > /etc/gromox/smtp.cfg
