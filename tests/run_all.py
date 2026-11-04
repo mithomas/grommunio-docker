@@ -22,6 +22,7 @@ TESTS = [
     ("test_db_socket.py", "MariaDB Unix Socket (DB_SOCKET) & Exim DB-Free Routing", False),
     ("test_password_escaping.py", "Password Special Characters & Direct Controller Auth", False),
     ("test_port_configuration.py", "Dedicated Host Port Mapping Decoupling", False),
+    ("test_db_init_safety.py", "Database Init & Migration Fail-Safe Behavior", False),
 ]
 
 from env_helper import get_bind_ip, get_ldap_port

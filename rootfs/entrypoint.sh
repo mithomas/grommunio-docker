@@ -173,27 +173,102 @@ while true; do
 done
 echo "==> Database reachable and responsive."
 
-TABLE_COUNT=$(MYSQL_PWD="${DB_PASSWORD}" mariadb "${MARIADB_CONN[@]}" -u "${DB_USER}" "${DB_NAME}" -sN -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = '${DB_NAME}';" 2>/dev/null || echo "0")
+# 5. Acquire advisory lock to prevent schema initialization / migration races across replicas
+echo "==> Acquiring MariaDB schema migration advisory lock..."
+DB_LOCK_ERR_FILE=$(mktemp)
+cleanup_db_lock() {
+    if [ -n "${DB_LOCK_COPROC_PID:-}" ] && kill -0 "${DB_LOCK_COPROC_PID}" 2>/dev/null; then
+        echo "==> Releasing MariaDB schema advisory lock..."
+        echo "SELECT RELEASE_LOCK('grommunio_schema_lock');" >&"${DB_LOCK_COPROC[1]}" 2>/dev/null || true
+        echo "QUIT;" >&"${DB_LOCK_COPROC[1]}" 2>/dev/null || true
+        exec {DB_LOCK_COPROC[1]}>&- 2>/dev/null || true
+        exec {DB_LOCK_COPROC[0]}<&- 2>/dev/null || true
+        kill "${DB_LOCK_COPROC_PID}" 2>/dev/null || true
+        wait "${DB_LOCK_COPROC_PID}" 2>/dev/null || true
+    fi
+    rm -f "${DB_LOCK_ERR_FILE:-}"
+}
+trap cleanup_db_lock EXIT INT TERM
 
-# 5. Initialize database schema if needed (strictly within DB_NAME)
-if [ "${TABLE_COUNT}" = "0" ] || [ -z "${TABLE_COUNT}" ]; then
-    echo "==> Database '${DB_NAME}' has no tables. Running initial schema creation (gromox-dbop -CC)..."
-    gromox-dbop -CC || {
-        echo "WARNING: gromox-dbop -CC returned non-zero. Attempting single -C..."
-        gromox-dbop -C || true
-    }
+coproc DB_LOCK_COPROC {
+    MYSQL_PWD="${DB_PASSWORD}" mariadb "${MARIADB_CONN[@]}" -u "${DB_USER}" "${DB_NAME}" --unbuffered -sN 2>"${DB_LOCK_ERR_FILE}"
+}
+
+echo "SELECT GET_LOCK('grommunio_schema_lock', 120);" >&"${DB_LOCK_COPROC[1]}"
+LOCK_RESULT=""
+if ! read -r -t 125 -u "${DB_LOCK_COPROC[0]}" LOCK_RESULT; then
+    echo "ERROR: Timed out waiting for MariaDB schema advisory lock response." >&2
+    if [ -s "${DB_LOCK_ERR_FILE}" ]; then
+        echo "MariaDB error: $(cat "${DB_LOCK_ERR_FILE}")" >&2
+    fi
+    exit 1
 fi
 
-echo "==> Running schema migrations (gromox-dbop -U)..."
-gromox-dbop -U || true
+if [ "${LOCK_RESULT}" != "1" ]; then
+    echo "ERROR: Failed to acquire MariaDB schema lock 'grommunio_schema_lock' (result: ${LOCK_RESULT:-empty})." >&2
+    if [ -s "${DB_LOCK_ERR_FILE}" ]; then
+        echo "MariaDB error: $(cat "${DB_LOCK_ERR_FILE}")" >&2
+    fi
+    exit 1
+fi
+echo "==> Acquired schema advisory lock."
 
-# 6. Provision admin user password
+# 6. Check database table count strictly within DB_NAME
+echo "==> Checking database table count for '${DB_NAME}'..."
+TABLE_ERR_FILE=$(mktemp)
+TABLE_COUNT_RAW=""
+if ! TABLE_COUNT_RAW=$(MYSQL_PWD="${DB_PASSWORD}" mariadb "${MARIADB_CONN[@]}" -u "${DB_USER}" "${DB_NAME}" -sN -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = '${DB_NAME}';" 2>"${TABLE_ERR_FILE}"); then
+    echo "ERROR: Failed to query table count from database '${DB_NAME}'." >&2
+    echo "MariaDB error: $(cat "${TABLE_ERR_FILE}")" >&2
+    rm -f "${TABLE_ERR_FILE}"
+    exit 1
+fi
+rm -f "${TABLE_ERR_FILE}"
+
+TABLE_COUNT=$(echo "${TABLE_COUNT_RAW}" | tr -d '[:space:]')
+if ! [[ "${TABLE_COUNT}" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: Invalid table count returned for database '${DB_NAME}': '${TABLE_COUNT_RAW}'" >&2
+    exit 1
+fi
+
+# 7. Initialize database schema if needed (strictly when TABLE_COUNT is 0)
+if [ "${TABLE_COUNT}" -eq 0 ]; then
+    echo "==> Database '${DB_NAME}' has no tables. Running initial schema creation (gromox-dbop -CC)..."
+    if ! gromox-dbop -CC; then
+        echo "WARNING: gromox-dbop -CC returned non-zero. Attempting single gromox-dbop -C..." >&2
+        if ! gromox-dbop -C; then
+            echo "ERROR: Database schema creation failed (both gromox-dbop -CC and -C failed)." >&2
+            exit 1
+        fi
+    fi
+    echo "==> Initial database schema created successfully."
+else
+    echo "==> Database '${DB_NAME}' already initialized (${TABLE_COUNT} tables found). Skipping initial creation."
+fi
+
+# 8. Run schema migrations
+echo "==> Running schema migrations (gromox-dbop -U)..."
+if ! gromox-dbop -U; then
+    echo "ERROR: Database schema migration failed (gromox-dbop -U)." >&2
+    exit 1
+fi
+echo "==> Schema migrations completed successfully."
+
+# 9. Provision admin user password
 if [ -n "${ADMIN_PASSWORD}" ]; then
     echo "==> Setting initial admin password..."
-    printf '%s\n' "${ADMIN_PASSWORD}" | grommunio-admin passwd --password-stdin 2>/dev/null || true
+    if ! printf '%s\n' "${ADMIN_PASSWORD}" | grommunio-admin passwd --password-stdin; then
+        echo "ERROR: Failed to set initial admin password with 'grommunio-admin passwd --password-stdin'." >&2
+        exit 1
+    fi
+    echo "==> Initial admin password provisioned successfully."
 fi
 
-# 7. Set permissions across volumes and runtime paths
+# Release advisory lock now that schema init/migration and admin provisioning are complete
+cleanup_db_lock
+trap - EXIT INT TERM
+
+# 10. Set permissions across volumes and runtime paths
 echo "==> Applying file ownership and permissions..."
 usermod -aG gromox www-data 2>/dev/null || true
 chown -R gromox:gromox /var/lib/gromox /run/gromox /var/log/gromox 2>/dev/null || true

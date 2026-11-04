@@ -180,8 +180,9 @@ docker compose up -d
 
 On startup, the container:
 1. Waits for database connectivity (`DB_HOST:DB_PORT` or `DB_SOCKET`).
-2. Checks if tables exist in `DB_NAME` as `DB_USER`; initializes schemas (`gromox-dbop -CC`) only if empty.
-3. Applies pending schema upgrades (`gromox-dbop -U`), sets the admin password, and starts `supervisord`.
+2. Acquires a MariaDB advisory lock (`GET_LOCK`) to serialize concurrent startups across replicas.
+3. Checks if tables exist in `DB_NAME` as `DB_USER` (failing fast on query errors); initializes schemas (`gromox-dbop -CC` / `-C`) only if empty.
+4. Applies pending schema upgrades (`gromox-dbop -U`), sets the admin password, releases the lock, and starts `supervisord`.
 
 ---
 
@@ -405,6 +406,7 @@ A standalone test suite validating all container services, endpoints, credential
 | **`tests/test_db_socket.py`** | Validates `DB_SOCKET` Unix socket handling and DB-free Exim domain routing. |
 | **`tests/test_password_escaping.py`** | Validates passwords with special characters ($, #, ', ", \, ;) & direct controller auth. |
 | **`tests/test_port_configuration.py`** | Validates host port decoupling, companion DB routing, and dynamic test suite ports. |
+| **`tests/test_db_init_safety.py`** | Validates MariaDB advisory locking, error-checked table counting, and fail-fast schema ops. |
 
 ### Run All Tests
 ```bash
@@ -428,7 +430,7 @@ Two GitHub Actions workflows automate container builds, integration testing, and
 ### Quality Gate (Integration Testing)
 Before any image is pushed to Docker Hub:
 - Docker Buildx builds the image for `linux/amd64` and starts the test stack (`docker compose --profile test up -d`).
-- Container health is verified via `/usr/local/bin/container-healthcheck.sh` and all 14 verification tests (`python3 tests/run_all.py`) run in CI.
+- Container health is verified via `/usr/local/bin/container-healthcheck.sh` and all 15 verification tests (`python3 tests/run_all.py`) run in CI.
 - Publication to Docker Hub only proceeds if 100% of tests pass.
 
 ### Image Tagging Convention
