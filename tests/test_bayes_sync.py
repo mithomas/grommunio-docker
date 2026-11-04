@@ -37,8 +37,10 @@ def test_static_bayes_contracts():
     assert "ATTACH DATABASE" in py_content, "FAIL: grommunio-bayes-sync.py missing ATTACH DATABASE"
     assert "DETACH DATABASE" in py_content, "FAIL: grommunio-bayes-sync.py missing DETACH DATABASE"
     assert "learned_messages" in py_content, "FAIL: grommunio-bayes-sync.py missing learned_messages table"
-    assert "parent_fid = 23" in py_content, "FAIL: grommunio-bayes-sync.py missing Junk parent_fid = 23 check"
-    assert "parent_fid == 27" in py_content, "FAIL: grommunio-bayes-sync.py missing Trash parent_fid == 27 check"
+    assert "FOLDER_JUNK = 23" in py_content, "FAIL: grommunio-bayes-sync.py missing FOLDER_JUNK = 23 constant"
+    assert "FOLDER_TRASH = 27" in py_content, "FAIL: grommunio-bayes-sync.py missing FOLDER_TRASH = 27 constant"
+    assert "mode=ro" in py_content, "FAIL: grommunio-bayes-sync.py missing mode=ro in ATTACH DATABASE"
+    assert "uri=True" in py_content, "FAIL: grommunio-bayes-sync.py missing uri=True in sqlite3.connect"
 
     loop_script = os.path.join(root_dir, "rootfs", "usr", "local", "bin", "grommunio-bayes-sync-loop.sh")
     with open(loop_script, "r", encoding="utf-8") as f:
@@ -91,9 +93,27 @@ echo "$@" >> "{rspamc_log}"
 if [ -f "{tmpdir}/rspamc_fail" ]; then
     exit 1
 fi
+if [ -f "{tmpdir}/rspamc_kill_on_107" ] && grep -q "107" "{tmpdir}/current_msg" 2>/dev/null; then
+    kill -9 $PPID
+    exit 1
+fi
 exit 0
 """)
         os.chmod(mock_rspamc, 0o755)
+
+        # Create mock gromox-exm2eml binary
+        exm2eml_log = os.path.join(tmpdir, "exm2eml.log")
+        mock_exm2eml = os.path.join(bin_dir, "gromox-exm2eml")
+        with open(mock_exm2eml, "w") as f:
+            f.write(f"""#!/bin/sh
+echo "$@" >> "{exm2eml_log}"
+if [ -f "{tmpdir}/exm2eml_fail" ]; then
+    exit 1
+fi
+printf "From: test@example.com\\nSubject: Mocked Export\\n\\nExported body\\n"
+exit 0
+""")
+        os.chmod(mock_exm2eml, 0o755)
 
         env = os.environ.copy()
         env["BAYES_STATE_DB"] = state_db
@@ -207,6 +227,71 @@ exit 0
         cur.execute("SELECT learned_type FROM learned_messages WHERE username = 'testuser' AND message_id = 104;")
         row = cur.fetchone()
         assert row and row[0] == "spam", f"FAIL: Message 104 not learned after recovery: {row}"
+
+        # ----------------------------------------------------------------------
+        # Case F: gromox-exm2eml export failure -> unlearned and retried
+        # ----------------------------------------------------------------------
+        conn_user.execute("INSERT INTO messages (message_id, parent_fid, mid_string) VALUES (105, 23, NULL);")
+        conn_user.commit()
+
+        exm_fail_flag = os.path.join(tmpdir, "exm2eml_fail")
+        open(exm_fail_flag, "w").close()
+
+        subprocess.run([sys.executable, py_script], env=env, check=True)
+        cur.execute("SELECT message_id FROM learned_messages WHERE username = 'testuser' AND message_id = 105;")
+        assert cur.fetchone() is None, "FAIL: Message 105 was learned despite gromox-exm2eml failure"
+
+        # Clear export failure -> message 105 should now be learned as spam
+        os.remove(exm_fail_flag)
+        subprocess.run([sys.executable, py_script], env=env, check=True)
+        cur.execute("SELECT learned_type FROM learned_messages WHERE username = 'testuser' AND message_id = 105;")
+        row = cur.fetchone()
+        assert row and row[0] == "spam", f"FAIL: Message 105 was not learned after exm2eml recovery: {row}"
+
+        # ----------------------------------------------------------------------
+        # Case G: Incremental commits preserve progress across interrupted runs
+        # ----------------------------------------------------------------------
+        conn_user.execute("INSERT INTO messages (message_id, parent_fid, mid_string) VALUES (106, 23, 'mid-106.eml');")
+        conn_user.execute("INSERT INTO messages (message_id, parent_fid, mid_string) VALUES (107, 23, 'mid-107.eml');")
+        conn_user.commit()
+        with open(os.path.join(eml_dir, "mid-106.eml"), "w") as f:
+            f.write("Subject: Spam 106\n\nPayload 106")
+        with open(os.path.join(eml_dir, "mid-107.eml"), "w") as f:
+            f.write("Subject: Spam 107\n\nPayload 107")
+
+        # Mock rspamc succeeds for 106, fails for 107
+        rspamc_selective = os.path.join(bin_dir, "rspamc")
+        with open(rspamc_selective, "w") as f:
+            f.write(f"""#!/bin/sh
+cat - > "{tmpdir}/last_payload"
+if grep -q "Payload 107" "{tmpdir}/last_payload"; then
+    exit 1
+fi
+exit 0
+""")
+
+        subprocess.run([sys.executable, py_script], env=env, check=True)
+        cur.execute("SELECT learned_type FROM learned_messages WHERE username = 'testuser' AND message_id = 106;")
+        assert cur.fetchone() is not None, "FAIL: Message 106 was not committed incrementally!"
+        cur.execute("SELECT learned_type FROM learned_messages WHERE username = 'testuser' AND message_id = 107;")
+        assert cur.fetchone() is None, "FAIL: Message 107 was recorded despite rspamc failure"
+
+        # Restore default mock rspamc
+        with open(rspamc_selective, "w") as f:
+            f.write('#!/bin/sh\nexit 0\n')
+
+        # ----------------------------------------------------------------------
+        # Case H: Read-only attachment prevents writes to user exchange database
+        # ----------------------------------------------------------------------
+        ro_verify = sqlite3.connect(state_db, uri=True)
+        escaped_user = user_db.replace("'", "''")
+        ro_verify.execute(f"ATTACH DATABASE 'file:{escaped_user}?mode=ro' AS test_ro_user")
+        try:
+            ro_verify.execute("INSERT INTO test_ro_user.messages (message_id, parent_fid) VALUES (999, 23);")
+            assert False, "FAIL: Write to read-only attached database succeeded unexpectedly!"
+        except sqlite3.OperationalError as exc:
+            assert "readonly" in str(exc).lower() or "read-only" in str(exc).lower(), f"Unexpected error: {exc}"
+        ro_verify.close()
 
         conn_user.close()
         conn_state.close()

@@ -7,10 +7,10 @@ High-performance batched Bayes training engine for Rspamd and Grommunio.
 3. Automatically prunes records for messages moved to Trash (27) or expunged.
 
 Performance design:
-- Uses SQLite ATTACH DATABASE and set-based differential queries.
+- Uses SQLite ATTACH DATABASE with read-only mode and set-based differential queries.
 - Zero per-message sqlite3 CLI process forks.
 - Bounded constant-time execution per mailbox when no messages changed folder.
-- Atomic batch updates to state database.
+- Incremental commits per successful learn to prevent lost progress on interruption.
 """
 import glob
 import logging
@@ -24,6 +24,10 @@ logger = logging.getLogger("bayes-sync")
 
 STATE_DB = os.environ.get("BAYES_STATE_DB", "/var/lib/rspamd/bayes_learned.sqlite3")
 GROMOX_USER_DIR = os.environ.get("GROMOX_USER_DIR", "/var/lib/gromox/user")
+
+# Gromox / MAPI folder identifiers
+FOLDER_JUNK = 23   # MAPI 0x17: Junk E-mail
+FOLDER_TRASH = 27  # MAPI 0x1B: Deleted Items / Trash
 
 
 def init_state_db(conn):
@@ -48,17 +52,34 @@ def learn_message(learn_type, eml_file, username, msg_id):
     """Pipes message payload to rspamc learn_spam or learn_ham."""
     cmd = ["rspamc", f"learn_{learn_type}"]
     try:
+        data = None
         if os.path.isfile(eml_file):
-            with open(eml_file, "rb") as f_eml:
-                res = subprocess.run(cmd, stdin=f_eml, capture_output=True, timeout=20)
+            try:
+                with open(eml_file, "rb") as f_eml:
+                    data = f_eml.read()
+            except OSError as exc:
+                logger.warning("[bayes-sync] Could not read %s: %s", eml_file, exc)
+                return False
         else:
-            exm_proc = subprocess.Popen(
+            exm_proc = subprocess.run(
                 ["gromox-exm2eml", "-u", username, str(msg_id)],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL
+                capture_output=True,
+                timeout=20,
             )
-            res = subprocess.run(cmd, stdin=exm_proc.stdout, capture_output=True, timeout=20)
-            exm_proc.wait()
+            if exm_proc.returncode != 0 or not exm_proc.stdout:
+                logger.warning(
+                    "[bayes-sync] gromox-exm2eml failed for %s msg %s (exit %s)",
+                    username,
+                    msg_id,
+                    exm_proc.returncode,
+                )
+                return False
+            data = exm_proc.stdout
+
+        if not data:
+            return False
+
+        res = subprocess.run(cmd, input=data, capture_output=True, timeout=20)
         return res.returncode == 0
     except Exception as exc:
         logger.warning("[bayes-sync] Error executing rspamc for %s msg %s: %s", username, msg_id, exc)
@@ -71,26 +92,23 @@ def sync_mailbox(conn, user_db):
     username = os.path.basename(mailbox_dir)
 
     try:
-        conn.execute("ATTACH DATABASE ? AS userdb", (user_db,))
+        escaped_db = os.path.abspath(user_db).replace("'", "''")
+        conn.execute(f"ATTACH DATABASE 'file:{escaped_db}?mode=ro' AS userdb")
     except sqlite3.OperationalError as exc:
         logger.warning("[bayes-sync] Could not attach %s: %s", user_db, exc)
         return
 
     try:
-        to_insert_spam = []
-        to_insert_ham = []
-        to_delete = []
-
         # ----------------------------------------------------------------------
         # 1. Detect unlearned messages in Junk E-mail (parent_fid = 23)
         # ----------------------------------------------------------------------
         cursor = conn.cursor()
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT m.message_id, m.mid_string
             FROM userdb.messages m
             LEFT JOIN learned_messages l
               ON l.username = ? AND l.message_id = m.message_id
-            WHERE m.parent_fid = 23
+            WHERE m.parent_fid = {FOLDER_JUNK}
               AND (l.learned_type IS NULL OR l.learned_type != 'spam');
         """, (username,))
         unlearned_spam = cursor.fetchall()
@@ -100,18 +118,23 @@ def sync_mailbox(conn, user_db):
                 continue
             eml_file = os.path.join(mailbox_dir, "eml", mid_str or "")
             if learn_message("spam", eml_file, username, msg_id):
-                to_insert_spam.append((username, msg_id, mid_str))
+                conn.execute("""
+                    INSERT OR REPLACE INTO learned_messages (username, message_id, mid_string, learned_type, learned_at)
+                    VALUES (?, ?, ?, 'spam', datetime('now'))
+                """, (username, msg_id, mid_str))
+                conn.commit()
                 logger.info("[bayes-sync] Learned SPAM for %s (msg %s)", username, msg_id)
 
         # ----------------------------------------------------------------------
         # 2. Detect messages moved OUT of Junk E-mail or expunged
         # ----------------------------------------------------------------------
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT l.message_id, l.mid_string, m.parent_fid
             FROM learned_messages l
             LEFT JOIN userdb.messages m
               ON m.message_id = l.message_id
-            WHERE l.username = ? AND l.learned_type = 'spam';
+            WHERE l.username = ? AND l.learned_type = 'spam'
+              AND (m.parent_fid IS NULL OR m.parent_fid != {FOLDER_JUNK});
         """, (username,))
         previously_spam = cursor.fetchall()
 
@@ -119,39 +142,22 @@ def sync_mailbox(conn, user_db):
             if not msg_id:
                 continue
 
-            if parent_fid is None:
-                # Message was permanently expunged
-                to_delete.append((username, msg_id))
-            elif parent_fid == 23:
-                # Still in Junk folder
-                continue
-            elif parent_fid == 27:
-                # Moved to Deleted Items / Trash (27)
-                to_delete.append((username, msg_id))
+            if parent_fid is None or parent_fid == FOLDER_TRASH:
+                # Expunged or moved to Deleted Items / Trash (27): prune from learned state
+                conn.execute("""
+                    DELETE FROM learned_messages WHERE username = ? AND message_id = ?
+                """, (username, msg_id))
+                conn.commit()
             else:
-                # Moved to Inbox (19) or user folder: Learn as HAM
+                # Moved out of Junk to Inbox or another user folder: Learn as HAM
                 eml_file = os.path.join(mailbox_dir, "eml", mid_str or "")
                 if learn_message("ham", eml_file, username, msg_id):
-                    to_insert_ham.append((username, msg_id, mid_str))
+                    conn.execute("""
+                        INSERT OR REPLACE INTO learned_messages (username, message_id, mid_string, learned_type, learned_at)
+                        VALUES (?, ?, ?, 'ham', datetime('now'))
+                    """, (username, msg_id, mid_str))
+                    conn.commit()
                     logger.info("[bayes-sync] Learned HAM for %s (msg %s moved to folder %s)", username, msg_id, parent_fid)
-
-        # Commit batch changes
-        if to_insert_spam:
-            conn.executemany("""
-                INSERT OR REPLACE INTO learned_messages (username, message_id, mid_string, learned_type, learned_at)
-                VALUES (?, ?, ?, 'spam', datetime('now'))
-            """, to_insert_spam)
-        if to_insert_ham:
-            conn.executemany("""
-                INSERT OR REPLACE INTO learned_messages (username, message_id, mid_string, learned_type, learned_at)
-                VALUES (?, ?, ?, 'ham', datetime('now'))
-            """, to_insert_ham)
-        if to_delete:
-            conn.executemany("""
-                DELETE FROM learned_messages WHERE username = ? AND message_id = ?
-            """, to_delete)
-
-        conn.commit()
 
     finally:
         try:
@@ -168,7 +174,7 @@ def main():
     if state_dir and not os.path.exists(state_dir):
         os.makedirs(state_dir, exist_ok=True)
 
-    conn = sqlite3.connect(STATE_DB, timeout=30.0)
+    conn = sqlite3.connect(STATE_DB, timeout=30.0, uri=True)
     try:
         init_state_db(conn)
         pattern = os.path.join(GROMOX_USER_DIR, "*", "*", "exchange.sqlite3")
