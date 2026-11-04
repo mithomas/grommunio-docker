@@ -271,12 +271,30 @@ trap - EXIT INT TERM
 # 10. Set permissions across volumes and runtime paths
 echo "==> Applying file ownership and permissions..."
 usermod -aG gromox www-data 2>/dev/null || true
-chown -R gromox:gromox /var/lib/gromox /run/gromox /var/log/gromox 2>/dev/null || true
+
+# Apply constant-time O(1) top-level ownership on /var/lib/gromox without traversing mailbox data
+chown gromox:gromox /var/lib/gromox 2>/dev/null || true
+chmod 0770 /var/lib/gromox 2>/dev/null || true
+for dir in /var/lib/gromox/*; do
+    [ -d "${dir}" ] || continue
+    if [ "${dir}" = "/var/lib/gromox/queue" ]; then
+        chown -R gromox:gromox /var/lib/gromox/queue 2>/dev/null || true
+    else
+        chown gromox:gromox "${dir}" 2>/dev/null || true
+    fi
+done
+
+# Optional one-time recursive permissions fix (opt-in via GROMOX_FIX_PERMISSIONS=true)
+if [ "${GROMOX_FIX_PERMISSIONS:-false}" = "true" ]; then
+    echo "==> GROMOX_FIX_PERMISSIONS=true: Performing one-time recursive ownership fix on /var/lib/gromox..."
+    chown -R gromox:gromox /var/lib/gromox 2>/dev/null || true
+fi
+
+chown -R gromox:gromox /run/gromox /var/log/gromox 2>/dev/null || true
 chmod 0755 /run/gromox 2>/dev/null || true
 chown -R grommunio:gromoxcf /etc/gromox 2>/dev/null || true
 chmod 0775 /etc/gromox 2>/dev/null || true
 chmod 0660 /etc/gromox/* 2>/dev/null || true
-chmod 0770 /var/lib/gromox 2>/dev/null || true
 
 chown -R redis:redis /var/lib/redis /run/redis /var/log/redis 2>/dev/null || true
 chown -R _rspamd:_rspamd /var/lib/rspamd /run/rspamd /var/log/rspamd 2>/dev/null || true
