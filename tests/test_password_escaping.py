@@ -164,7 +164,55 @@ def test_container_configuration():
         print("[-] FAIL: rootfs/entrypoint.sh does not use printf for admin password", file=sys.stderr)
         return False
 
+    # 6. Verify single rspamadm call and fail-fast check
+    if "rspamadm pw -q --password" in entrypoint_content:
+        print("[-] FAIL: rootfs/entrypoint.sh still contains redundant rspamadm fallback", file=sys.stderr)
+        return False
+    if 'RSPAMD_HASH=$(rspamadm pw -q -p "${RSPAMD_PASSWORD}" 2>/dev/null || true)' not in entrypoint_content:
+        print("[-] FAIL: rootfs/entrypoint.sh missing single rspamadm pw call", file=sys.stderr)
+        return False
+    if 'ERROR: Failed to generate Rspamd controller password hash' not in entrypoint_content:
+        print("[-] FAIL: rootfs/entrypoint.sh missing fail-fast check for RSPAMD_HASH", file=sys.stderr)
+        return False
+
     print("    [+] In-repo configs confirmed: direct 11335 connection, bridge removed, MYSQL_PWD & printf active.")
+    return True
+
+
+def test_rspamd_hash_failure_handling():
+    print("    [>] 5. Validating Rspamd password hash fail-fast error handling...")
+    fail_snippet = '''
+set -e
+rspamadm() {
+    return 1
+}
+RSPAMD_PASSWORD="test_secret"
+RSPAMD_HASH=$(rspamadm pw -q -p "${RSPAMD_PASSWORD}" 2>/dev/null || true)
+if [ -z "${RSPAMD_HASH}" ]; then
+    echo "ERROR: Failed to generate Rspamd controller password hash with 'rspamadm pw'." >&2
+    exit 1
+fi
+echo "SHOULD_NOT_REACH"
+'''
+    res = subprocess.run(["bash", "-c", fail_snippet], capture_output=True, text=True)
+    if res.returncode != 1:
+        print(f"[-] FAIL: Expected exit code 1 on rspamadm failure, got {res.returncode}", file=sys.stderr)
+        return False
+    if "Failed to generate Rspamd controller password hash" not in res.stderr:
+        print(f"[-] FAIL: Expected error message on stderr, got: {res.stderr}", file=sys.stderr)
+        return False
+    if "SHOULD_NOT_REACH" in res.stdout:
+        print("[-] FAIL: Execution continued past hash failure!", file=sys.stderr)
+        return False
+
+    special_pw = r"p@$$w0rd'#\";\4"
+    real_cmd = ["docker", "compose", "exec", "-T", "grommunio", "rspamadm", "pw", "-q", "-p", special_pw]
+    real_res = subprocess.run(real_cmd, capture_output=True, text=True)
+    if real_res.returncode != 0 or not real_res.stdout.strip().startswith("$2$"):
+        print(f"[-] FAIL: Real rspamadm failed with special character password: {real_res.stderr or real_res.stdout}", file=sys.stderr)
+        return False
+
+    print("    [+] Fail-fast error handling and real rspamadm special character hashing verified.")
     return True
 
 
@@ -177,6 +225,8 @@ def check_password_escaping():
     if not test_printf_shell_safety():
         return False
     if not test_container_configuration():
+        return False
+    if not test_rspamd_hash_failure_handling():
         return False
     return True
 

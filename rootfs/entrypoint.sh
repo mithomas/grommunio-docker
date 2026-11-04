@@ -73,14 +73,14 @@ if [ ! -f /var/lib/grommunio-admin-api/auth-private.pem ] || [ ! -f /var/lib/gro
 fi
 
 # Generate Rspamd controller password hash
-if [ -n "${RSPAMD_PASSWORD}" ]; then
-    RSPAMD_HASH=$(rspamadm pw -q --password="${RSPAMD_PASSWORD}" 2>/dev/null || rspamadm pw -p "${RSPAMD_PASSWORD}" 2>/dev/null || true)
-    if [ -n "${RSPAMD_HASH}" ]; then
-        echo "password = \"${RSPAMD_HASH}\";" > /run/rspamd/worker-controller-password.inc
-        chmod 0640 /run/rspamd/worker-controller-password.inc 2>/dev/null || true
-        chown _rspamd:_rspamd /run/rspamd/worker-controller-password.inc 2>/dev/null || true
-    fi
+RSPAMD_HASH=$(rspamadm pw -q -p "${RSPAMD_PASSWORD}" 2>/dev/null || true)
+if [ -z "${RSPAMD_HASH}" ]; then
+    echo "ERROR: Failed to generate Rspamd controller password hash with 'rspamadm pw'." >&2
+    exit 1
 fi
+echo "password = \"${RSPAMD_HASH}\";" > /run/rspamd/worker-controller-password.inc
+chmod 0640 /run/rspamd/worker-controller-password.inc 2>/dev/null || true
+chown _rspamd:_rspamd /run/rspamd/worker-controller-password.inc 2>/dev/null || true
 
 # Export timezone for processes
 export TZ="${TIMEZONE:-UTC}"
