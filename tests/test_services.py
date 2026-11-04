@@ -52,7 +52,7 @@ def check_services():
 
 if __name__ == "__main__":
     if check_services():
-        print("[+] SUCCESS: All 13 services are RUNNING.\n")
+        print("[+] SUCCESS: All 14 services are RUNNING.\n")
         sys.exit(0)
     else:
         print("[-] FAILED: One or more services are not running.\n", file=sys.stderr)

@@ -26,6 +26,7 @@ TESTS = [
     ("test_log_retention.py", "Persistent Log Growth Bounding & 1-Year Retention", False),
     ("test_mailbox_ownership.py", "Mailbox Volume Ownership Optimization & Repair", False),
     ("test_bayes_sync.py", "Bayes Synchronization Engine & Scan Cost Reduction", False),
+    ("test_healthcheck.py", "Container Healthcheck Diagnostics & Thresholds", False),
 ]
 
 from env_helper import get_bind_ip, get_ldap_port

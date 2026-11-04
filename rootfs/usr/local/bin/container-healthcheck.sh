@@ -2,7 +2,7 @@
 set -e
 
 # 1. Check Supervisor status: ensure daemon is responsive and all registered services are RUNNING
-STATUS=$(supervisorctl status 2>/dev/null)
+STATUS=$(supervisorctl status 2>/dev/null || true)
 if [ -z "$STATUS" ]; then
     echo "HEALTHCHECK FAILED: supervisorctl produced no output or daemon not responding" >&2
     exit 1
@@ -53,7 +53,7 @@ fi
 LOW_SPACE=$(df -Pk /var/log /var/lib/gromox 2>/dev/null | awk 'NR > 1 {
     pct = $5; sub(/%/, "", pct);
     avail_kb = $4;
-    if (pct >= 95 || avail_kb < 102400) {
+    if (pct + 0 >= 95 || avail_kb < 102400) {
         printf "%s (usage: %s%%, free: %d MB)\n", $6, pct, int(avail_kb / 1024);
     }
 }')
