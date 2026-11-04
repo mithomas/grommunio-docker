@@ -54,7 +54,7 @@ fi
 
 # 2. Setup tmpfs directories
 mkdir -p /run/gromox /run/php /run/redis /run/rspamd /run/supervisor /run/grommunio-admin-api /run/nginx /run/mysqld
-if [ -n "${DB_SOCKET}" ] && [ "${DB_SOCKET}" != "/run/mysqld/mysqld.sock" ]; then
+if [ -n "${DB_SOCKET}" ] && [ "$(realpath -m "${DB_SOCKET}")" != "$(realpath -m /run/mysqld/mysqld.sock)" ]; then
     ln -sf "${DB_SOCKET}" /run/mysqld/mysqld.sock
 fi
 mkdir -p /var/log/gromox /var/log/supervisor /var/log/nginx /var/log/grommunio-sync /var/log/redis /var/log/rspamd /var/log/exim4
