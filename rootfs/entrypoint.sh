@@ -272,7 +272,6 @@ trap - EXIT INT TERM
 
 # 10. Set permissions across volumes and runtime paths
 echo "==> Applying file ownership and permissions..."
-usermod -aG gromox www-data 2>/dev/null || true
 
 # Apply constant-time O(1) top-level ownership on /var/lib/gromox without traversing mailbox data
 chown gromox:gromox /var/lib/gromox 2>/dev/null || true

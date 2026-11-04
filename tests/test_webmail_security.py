@@ -18,6 +18,9 @@ Validates:
 6. FastCGI Origin normalization:
    - Submitting logon with Origin: http://localhost:8080 succeeds (HTTP 303 redirect)
    - Untrusted cross-origin requests (Origin: http://evil.com) are rejected with HTTP 403
+7. System user group memberships:
+   - User www-data belongs to gromox group in image
+   - Ineffective startup usermod on read-only rootfs is absent from entrypoint.sh
 """
 import subprocess
 import sys
@@ -181,6 +184,22 @@ def check_webmail_root_ingress():
             print(f"    [-] Untrusted Origin returned HTTP {ex.code}, expected 403.", file=sys.stderr)
             return False
         print("    [+] Untrusted Origin ('http://evil.com') correctly rejected with HTTP 403 Forbidden.")
+
+    # 8. Verify www-data group membership and absence of startup usermod on read-only rootfs
+    import os
+    root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    entrypoint_path = os.path.join(root_dir, "rootfs", "entrypoint.sh")
+    with open(entrypoint_path, "r", encoding="utf-8") as f:
+        entrypoint_content = f.read()
+    if "usermod" in entrypoint_content:
+        print("    [-] entrypoint.sh still contains ineffective usermod command", file=sys.stderr)
+        return False
+
+    id_proc = subprocess.run(["docker", "compose", "exec", "-T", "grommunio", "id", "www-data"], capture_output=True, text=True)
+    if id_proc.returncode != 0 or "gromox" not in id_proc.stdout:
+        print(f"    [-] www-data is not a member of gromox group: {id_proc.stderr or id_proc.stdout}", file=sys.stderr)
+        return False
+    print("    [+] Container user 'www-data' confirmed member of 'gromox' group (no startup usermod).")
 
     return True
 
