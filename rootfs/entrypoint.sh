@@ -153,31 +153,29 @@ MAX_RETRIES=45
 COUNT=0
 if [ -n "${DB_SOCKET}" ]; then
     echo "==> Checking database connection via Unix socket ${DB_SOCKET}..."
-    while ! ( [ -S "${DB_SOCKET}" ] && mariadb --protocol=SOCKET -S "${DB_SOCKET}" -u "${DB_USER}" -p"${DB_PASSWORD}" "${DB_NAME}" -e "SELECT 1;" >/dev/null 2>&1 ); do
-        COUNT=$((COUNT + 1))
-        if [ ${COUNT} -ge ${MAX_RETRIES} ]; then
-            echo "ERROR: Database socket at ${DB_SOCKET} did not respond within ${MAX_RETRIES} retries."
-            exit 1
-        fi
-        echo "Waiting for MariaDB socket at ${DB_SOCKET}... (${COUNT}/${MAX_RETRIES})"
-        sleep 2
-    done
-    echo "==> Database socket reachable."
-    TABLE_COUNT=$(mariadb --protocol=SOCKET -S "${DB_SOCKET}" -u "${DB_USER}" -p"${DB_PASSWORD}" "${DB_NAME}" -sN -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = '${DB_NAME}';" 2>/dev/null || echo "0")
+    MARIADB_CONN=(--protocol=SOCKET -S "${DB_SOCKET}")
 else
     echo "==> Checking database connection to ${DB_HOST}:${DB_PORT}..."
-    while ! nc -z -w 2 "${DB_HOST}" "${DB_PORT}" 2>/dev/null; do
-        COUNT=$((COUNT + 1))
-        if [ ${COUNT} -ge ${MAX_RETRIES} ]; then
-            echo "ERROR: Database at ${DB_HOST}:${DB_PORT} did not respond within ${MAX_RETRIES} seconds."
-            exit 1
-        fi
-        echo "Waiting for MariaDB at ${DB_HOST}:${DB_PORT}... (${COUNT}/${MAX_RETRIES})"
-        sleep 2
-    done
-    echo "==> Database reachable."
-    TABLE_COUNT=$(mariadb -h "${DB_HOST}" -P "${DB_PORT}" -u "${DB_USER}" -p"${DB_PASSWORD}" "${DB_NAME}" -sN -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = '${DB_NAME}';" 2>/dev/null || echo "0")
+    MARIADB_CONN=(-h "${DB_HOST}" -P "${DB_PORT}")
 fi
+
+DB_ERR=""
+while true; do
+    if DB_ERR=$(mariadb "${MARIADB_CONN[@]}" -u "${DB_USER}" -p"${DB_PASSWORD}" "${DB_NAME}" -e "SELECT 1;" 2>&1 >/dev/null); then
+        break
+    fi
+    COUNT=$((COUNT + 1))
+    if [ ${COUNT} -ge ${MAX_RETRIES} ]; then
+        echo "ERROR: Database connection failed after ${MAX_RETRIES} retries."
+        echo "Last error: ${DB_ERR}"
+        exit 1
+    fi
+    echo "Waiting for MariaDB... (${COUNT}/${MAX_RETRIES}): ${DB_ERR}"
+    sleep 2
+done
+echo "==> Database reachable and responsive."
+
+TABLE_COUNT=$(mariadb "${MARIADB_CONN[@]}" -u "${DB_USER}" -p"${DB_PASSWORD}" "${DB_NAME}" -sN -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = '${DB_NAME}';" 2>/dev/null || echo "0")
 
 # 5. Initialize database schema if needed (strictly within DB_NAME)
 if [ "${TABLE_COUNT}" = "0" ] || [ -z "${TABLE_COUNT}" ]; then

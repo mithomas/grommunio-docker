@@ -256,6 +256,13 @@ finally:
         return False
     print("    [+] Confirmed realpath -m prevents self-referential symlink collision between /var/run and /run.")
 
+    # 8. Verify error reporting logic in rootfs/entrypoint.sh
+    if os.path.exists(host_entrypoint):
+        if "DB_ERR=" not in entrypoint_content or "Last error:" not in entrypoint_content:
+            print("[-] FAIL: rootfs/entrypoint.sh does not capture or report MariaDB error output", file=sys.stderr)
+            return False
+        print("    [+] Confirmed rootfs/entrypoint.sh captures and reports detailed MariaDB errors.")
+
     return True
 
 
