@@ -372,7 +372,7 @@ A standalone test suite validating all container services, endpoints, credential
 | **`tests/test_db_socket.py`** | Validates `DB_SOCKET` Unix socket handling and DB-free Exim domain routing. |
 | **`tests/test_password_escaping.py`** | Validates passwords with special characters ($, #, ', ", \, ;) & direct controller auth. |
 | **`tests/test_port_configuration.py`** | Validates host port decoupling, companion DB routing, and dynamic test suite ports. |
-| **`tests/test_db_init_safety.py`** | Validates MariaDB advisory locking, error-checked table counting, and fail-fast schema ops. |
+| **`tests/test_db_init_safety.py`** | Validates MariaDB advisory locking, signal trap handling (exit 143), error-checked table counting, and fail-fast schema ops. |
 | **`tests/test_log_retention.py`** | Validates 1-year log retention (53 weekly archives), copytruncate, and disk monitoring. |
 | **`tests/test_mailbox_ownership.py`** | Validates O(1) shallow ownership, GROMOX_FIX_PERMISSIONS, and repair script. |
 | **`tests/test_bayes_sync.py`** | Validates batched Bayes sync engine, spam/ham/trash transitions, and scan cost. |

@@ -4,6 +4,7 @@ Verification Test 15: Database Initialization & Migrations Fail-Safe Behavior
 Verifies that rootfs/entrypoint.sh enforces fail-safe database operations:
 1. Static contract verification:
    - MariaDB advisory locking (GET_LOCK / RELEASE_LOCK) exists to serialize concurrent startups.
+   - Separate EXIT (cleanup_db_lock) and INT/TERM ('exit 143') traps, disarmed via 'trap - EXIT INT TERM'.
    - Table count query captures stderr and validates integer result instead of silent fallback (|| echo "0").
    - Absence of '|| true' on gromox-dbop -CC, gromox-dbop -C, and gromox-dbop -U.
    - Absence of '2>/dev/null || true' on grommunio-admin passwd.
@@ -13,6 +14,9 @@ Verifies that rootfs/entrypoint.sh enforces fail-safe database operations:
    - Probes live MariaDB advisory locking in-container to ensure concurrent startups serialize without race conditions.
 4. Database state & migration idempotence:
    - Confirms that the database is populated and running migrations (gromox-dbop -U) succeeds cleanly.
+5. Signal trap handling & lock release:
+   - Verifies that SIGTERM/SIGINT during startup trigger exit code 143, release lock/coprocess, and halt execution.
+   - Verifies normal startup disarms traps with 'trap - EXIT INT TERM' and exits cleanly.
 """
 import os
 import re
@@ -28,7 +32,7 @@ def test_static_entrypoint_contracts():
     with open(entrypoint_path, "r", encoding="utf-8") as f:
         content = f.read()
 
-    # 1. Assert MariaDB advisory lock presence
+    # 1. Assert MariaDB advisory lock presence and trap semantics
     assert "GET_LOCK('grommunio_schema_lock'" in content, (
         "FAIL: entrypoint.sh missing GET_LOCK('grommunio_schema_lock' advisory locking"
     )
@@ -37,6 +41,15 @@ def test_static_entrypoint_contracts():
     )
     assert "cleanup_db_lock" in content and "trap cleanup_db_lock" in content, (
         "FAIL: entrypoint.sh missing cleanup_db_lock trap"
+    )
+    assert "trap cleanup_db_lock EXIT" in content, (
+        "FAIL: entrypoint.sh missing 'trap cleanup_db_lock EXIT'"
+    )
+    assert "trap 'exit 143' INT TERM" in content, (
+        "FAIL: entrypoint.sh missing 'trap \\'exit 143\\' INT TERM'"
+    )
+    assert "trap - EXIT INT TERM" in content, (
+        "FAIL: entrypoint.sh missing 'trap - EXIT INT TERM' to disarm trap"
     )
 
     # 2. Assert no silent table count fallback
@@ -270,6 +283,139 @@ print(f"OK_DB_MIGRATION_TABLES_{count}")
     return True
 
 
+def test_advisory_lock_signal_handling():
+    print("    [>] 5. Validating advisory lock signal trap handling (SIGTERM / exit 143)...")
+    signal_test_script = r'''
+import os
+import signal
+import subprocess
+import sys
+import time
+
+script = """
+set -e
+DB_LOCK_ERR_FILE=$(mktemp)
+cleanup_db_lock() {
+    echo "CLEANUP_INVOKED"
+    if [ -n "${DB_LOCK_COPROC_PID:-}" ] && kill -0 "${DB_LOCK_COPROC_PID}" 2>/dev/null; then
+        kill "${DB_LOCK_COPROC_PID}" 2>/dev/null || true
+        wait "${DB_LOCK_COPROC_PID}" 2>/dev/null || true
+        unset DB_LOCK_COPROC_PID
+    fi
+    rm -f "${DB_LOCK_ERR_FILE:-}"
+}
+trap cleanup_db_lock EXIT
+trap "exit 143" INT TERM
+
+coproc DB_LOCK_COPROC {
+    exec sleep 100
+}
+
+echo "PID:$$"
+echo "COPROC_PID:$DB_LOCK_COPROC_PID"
+echo "LOCK_WAIT"
+read -t 30
+echo "SUBSEQUENT_STEPS_SHOULD_NOT_RUN"
+"""
+
+# Case A: SIGTERM interrupts during wait, exits with 143, runs cleanup, stops subsequent steps
+p = subprocess.Popen(["bash", "-c", script], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+pid = None
+coproc_pid = None
+for line in p.stdout:
+    line = line.strip()
+    if line.startswith("PID:"):
+        pid = int(line.split(":", 1)[1])
+    elif line.startswith("COPROC_PID:"):
+        coproc_pid = int(line.split(":", 1)[1])
+    elif line == "LOCK_WAIT":
+        break
+
+if not pid or not coproc_pid:
+    p.kill()
+    print("FAIL: Failed to initialize test process or coprocess", file=sys.stderr)
+    sys.exit(1)
+
+time.sleep(0.1)
+os.kill(pid, signal.SIGTERM)
+stdout, stderr = p.communicate(timeout=5)
+
+if p.returncode != 143:
+    print(f"FAIL: Expected return code 143 on SIGTERM, got {p.returncode}", file=sys.stderr)
+    sys.exit(1)
+if stdout.strip() != "CLEANUP_INVOKED":
+    print(f"FAIL: Unexpected output on SIGTERM:\n{stdout}", file=sys.stderr)
+    sys.exit(1)
+if subprocess.run(["kill", "-0", str(coproc_pid)], capture_output=True).returncode == 0:
+    print("FAIL: Coprocess was leaked and not terminated by cleanup_db_lock!", file=sys.stderr)
+    sys.exit(1)
+
+# Case B: SIGINT also triggers exit 143 and releases lock without running subsequent steps
+p2 = subprocess.Popen(["bash", "-c", script], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+pid2 = None
+for line in p2.stdout:
+    line = line.strip()
+    if line.startswith("PID:"):
+        pid2 = int(line.split(":", 1)[1])
+    elif line == "LOCK_WAIT":
+        break
+time.sleep(0.1)
+os.kill(pid2, signal.SIGINT)
+stdout2, _ = p2.communicate(timeout=5)
+if p2.returncode != 143 or stdout2.strip() != "CLEANUP_INVOKED":
+    print(f"FAIL: SIGINT trap failed: rc={p2.returncode}, out={stdout2}", file=sys.stderr)
+    sys.exit(1)
+
+# Case C: Normal path disarms trap with 'trap - EXIT INT TERM' and exits 0 cleanly
+norm_script = """
+set -e
+DB_LOCK_ERR_FILE=$(mktemp)
+cleanup_db_lock() {
+    echo "CLEANUP_INVOKED"
+    if [ -n "${DB_LOCK_COPROC_PID:-}" ] && kill -0 "${DB_LOCK_COPROC_PID}" 2>/dev/null; then
+        kill "${DB_LOCK_COPROC_PID}" 2>/dev/null || true
+        wait "${DB_LOCK_COPROC_PID}" 2>/dev/null || true
+        unset DB_LOCK_COPROC_PID
+    fi
+    rm -f "${DB_LOCK_ERR_FILE:-}"
+}
+trap cleanup_db_lock EXIT
+trap "exit 143" INT TERM
+
+coproc DB_LOCK_COPROC {
+    exec sleep 100
+}
+
+cleanup_db_lock
+trap - EXIT INT TERM
+echo "NORMAL_COMPLETE"
+"""
+p3 = subprocess.run(["bash", "-c", norm_script], capture_output=True, text=True)
+if p3.returncode != 0:
+    print(f"FAIL: Normal path failed with return code {p3.returncode}", file=sys.stderr)
+    sys.exit(1)
+if p3.stdout.splitlines() != ["CLEANUP_INVOKED", "NORMAL_COMPLETE"]:
+    print(f"FAIL: Normal path did not disarm trap cleanly: {p3.stdout}", file=sys.stderr)
+    sys.exit(1)
+
+print("OK_ADVISORY_LOCK_SIGNAL_HANDLING")
+'''
+    res = subprocess.run(
+        ["docker", "exec", "-i", "grommunio", "python3", "-"],
+        input=signal_test_script,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    if res.returncode != 0 or "OK_ADVISORY_LOCK_SIGNAL_HANDLING" not in res.stdout:
+        print(f"    [-] Advisory lock signal trap verification failed:\n{res.stderr or res.stdout}", file=sys.stderr)
+        return False
+
+    print("    [+] Advisory lock signal trap verified: SIGTERM triggers exit 143, releases lock, and disarms cleanly.")
+    return True
+
+
 def main():
     print("==> [15/15] Checking Database Initialization & Migrations Fail-Safe Behavior...")
     if not test_static_entrypoint_contracts():
@@ -279,6 +425,8 @@ def main():
     if not test_mariadb_advisory_locking():
         return 1
     if not test_schema_migration_idempotence():
+        return 1
+    if not test_advisory_lock_signal_handling():
         return 1
     print("    [+] ALL DATABASE FAIL-SAFE VERIFICATIONS PASSED.")
     return 0

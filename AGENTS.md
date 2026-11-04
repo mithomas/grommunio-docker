@@ -31,7 +31,7 @@ All functional verification checks performed during development are codified as 
 | **`tests/test_db_socket.py`** | MariaDB Unix Socket & Exim Routing | Validates `DB_SOCKET` Unix socket connection handling and DB-free Exim primary/alias domain routing. |
 | **`tests/test_password_escaping.py`** | Password Special Characters & Direct Controller Auth | Validates safe handling of passwords with special characters ($, #, ', ", \, ;), PyYAML escaping, printf shell safety, and direct Rspamd controller connectivity. |
 | **`tests/test_port_configuration.py`** | Dedicated Host Port Mapping Decoupling | Validates typed port helper extraction, internal healthcheck and defaults decoupling from host port env variables, companion MariaDB container routing, and dynamic test suite resolution. |
-| **`tests/test_db_init_safety.py`** | Database Init & Migration Fail-Safe Behavior | Validates MariaDB advisory locking (GET_LOCK), strict error-checked table counting, fail-fast schema initialization and migrations without success-shaped fallbacks, and safe admin password provisioning. |
+| **`tests/test_db_init_safety.py`** | Database Init & Migration Fail-Safe Behavior | Validates MariaDB advisory locking (GET_LOCK), separate EXIT/signal traps (exit 143), strict error-checked table counting, and fail-fast schema ops. |
 | **`tests/test_log_retention.py`** | Persistent Log Growth Bounding & 1-Year Retention | Validates weekly logrotate rules with 53 archives (371 days > 1 year), copytruncate write continuity, delaycompress Admin UI tail fallback, and low-disk healthcheck alerts. |
 | **`tests/test_mailbox_ownership.py`** | Mailbox Volume Ownership Optimization & Repair | Validates O(1) constant-time shallow ownership on /var/lib/gromox without recursive mailbox traversal, GROMOX_FIX_PERMISSIONS flag, and standalone repair script. |
 | **`tests/test_bayes_sync.py`** | Bayes Synchronization Engine & Scan Cost Reduction | Validates Python batched sync engine with SQLite ATTACH DATABASE, set-based differential queries, spam/ham/trash/expunge lifecycle transitions, retry resilience, and zero redundant process forks. |
@@ -120,6 +120,7 @@ python3 tests/test_healthcheck.py
 
 9. **Fail-Safe Database Initialization & Multi-Replica Advisory Locking:**
    - Database operations in `entrypoint.sh` acquire a MariaDB advisory lock (`GET_LOCK('grommunio_schema_lock', 120)`), serializing concurrent container startups and avoiding schema creation / migration race conditions across multiple replicas or restarts.
+   - Startup traps separate `EXIT` (`cleanup_db_lock`) and `INT`/`TERM` (`'exit 143'`) so a stop signal aborts startup immediately with status 143 and releases the advisory lock exactly once, before disarming via `trap - EXIT INT TERM` prior to `supervisord` execution.
    - Table count queries strictly check command exit codes and integer formats, ensuring connection errors or query failures halt startup rather than falsely signaling an empty database.
    - Schema creation (`gromox-dbop -CC` / `-C`), migrations (`gromox-dbop -U`), and initial admin password provisioning run fail-fast without `|| true` fallbacks, logging actionable diagnostics upon failure.
 

@@ -185,10 +185,12 @@ cleanup_db_lock() {
         exec {DB_LOCK_COPROC[0]}<&- 2>/dev/null || true
         kill "${DB_LOCK_COPROC_PID}" 2>/dev/null || true
         wait "${DB_LOCK_COPROC_PID}" 2>/dev/null || true
+        unset DB_LOCK_COPROC_PID
     fi
     rm -f "${DB_LOCK_ERR_FILE:-}"
 }
-trap cleanup_db_lock EXIT INT TERM
+trap cleanup_db_lock EXIT
+trap 'exit 143' INT TERM
 
 coproc DB_LOCK_COPROC {
     MYSQL_PWD="${DB_PASSWORD}" mariadb "${MARIADB_CONN[@]}" -u "${DB_USER}" "${DB_NAME}" --unbuffered -sN 2>"${DB_LOCK_ERR_FILE}"
