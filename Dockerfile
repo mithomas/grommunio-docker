@@ -60,7 +60,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       sqlite3 \
       ldap-utils \
       netcat-openbsd \
-      gettext-base
+      gettext-base \
+      logrotate
 
 # 3. Ensure system users and group memberships exist
 RUN getent group gromoxcf >/dev/null || groupadd -r gromoxcf && \
@@ -114,6 +115,7 @@ RUN for POOL_DIR in $(find /etc/php -type d -name "pool.d" 2>/dev/null); do \
     done \
     && sed -i 's/\r$//' /entrypoint.sh /usr/local/bin/* 2>/dev/null || true \
     && chmod +x /entrypoint.sh /usr/local/bin/* 2>/dev/null || true \
+    && chmod 0644 /etc/logrotate.d/* 2>/dev/null || true \
     && python3 -m compileall -q /usr/share/grommunio-admin-api/
 
 ENV TZ=UTC

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Verification Test 1: Supervisor Services Status
-Asserts that all 13 required background processes inside the Grommunio container
+Asserts that all 14 required background processes inside the Grommunio container
 are in the RUNNING state.
 """
 import subprocess
@@ -11,6 +11,7 @@ EXPECTED_SERVICES = {
     "exim",
     "grommunio-admin-api",
     "grommunio-bayes-sync",
+    "grommunio-logrotate",
     "gromox-delivery",
     "gromox-delivery-queue",
     "gromox-event",

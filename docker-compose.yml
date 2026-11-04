@@ -40,6 +40,11 @@ services:
       - "host.docker.internal:host-gateway"
     networks:
       - grommunio-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: unless-stopped
 
   # Optional companion MariaDB service for standalone testing:
@@ -71,6 +76,11 @@ services:
       - "127.0.0.1:${DB_PORT:-3306}:3306"
     networks:
       - grommunio-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: unless-stopped
 
   # Optional companion OpenLDAP service for standalone testing:
@@ -102,6 +112,11 @@ services:
       - "127.0.0.1:${LDAP_PORT:-389}:389"
     networks:
       - grommunio-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: unless-stopped
 
 volumes:

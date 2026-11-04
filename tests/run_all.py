@@ -8,7 +8,7 @@ import os
 import sys
 
 TESTS = [
-    ("test_services.py", "Supervisor Services (All 13 Running)", False),
+    ("test_services.py", "Supervisor Services (All 14 Running)", False),
     ("test_endpoints.py", "HTTP Ingress Endpoints & Content-Types", False),
     ("test_admin_auth.py", "Grommunio Admin API & JWT Auth", False),
     ("test_rspamd_auth.py", "Rspamd Dashboard Dedicated Auth", False),
@@ -23,6 +23,7 @@ TESTS = [
     ("test_password_escaping.py", "Password Special Characters & Direct Controller Auth", False),
     ("test_port_configuration.py", "Dedicated Host Port Mapping Decoupling", False),
     ("test_db_init_safety.py", "Database Init & Migration Fail-Safe Behavior", False),
+    ("test_log_retention.py", "Persistent Log Growth Bounding & 1-Year Retention", False),
 ]
 
 from env_helper import get_bind_ip, get_ldap_port

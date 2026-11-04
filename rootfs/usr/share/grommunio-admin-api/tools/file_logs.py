@@ -148,22 +148,39 @@ class FileReader:
             lines = lines[-10000:]
 
         entries = []
+        needed = (n or 10) + (skip or 0)
+        rotated_path = self.path + ".1"
+        rot_entries = []
+        if len(lines) < needed and os.path.isfile(rotated_path):
+            try:
+                rot_mtime = datetime.fromtimestamp(os.path.getmtime(rotated_path))
+                with open(rotated_path, "r", encoding="utf-8", errors="replace") as f_rot:
+                    rot_lines = f_rot.readlines()
+                for line in rot_lines[-needed:]:
+                    entry = self._parse_entry(line, rot_mtime)
+                    if entry:
+                        rot_entries.append(entry)
+            except Exception as exc:
+                logger.debug("Could not read rotated log %s: %s", rotated_path, exc)
+
         for line in lines:
             entry = self._parse_entry(line, mtime)
             if entry:
                 entries.append(entry)
 
+        all_entries = rot_entries + entries
+
         if after is not None:
-            res = [e[0] for e in entries if e[1] > after]
+            res = [e[0] for e in all_entries if e[1] > after]
             if n and n > 0:
                 res = res[-n:]
             return res
 
         if skip > 0:
-            entries = entries[:-skip]
+            all_entries = all_entries[:-skip]
         if n > 0:
-            entries = entries[-n:]
-        return [e[0] for e in entries]
+            all_entries = all_entries[-n:]
+        return [e[0] for e in all_entries]
 
 
 # Wrap JournaldReader in LogReader to fallback to FileReader if journald has 0 entries

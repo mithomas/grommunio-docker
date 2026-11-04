@@ -292,6 +292,7 @@ chown grommunio:grommunio /var/log/grommunio-admin-api.log 2>/dev/null || true
 chmod 0644 /var/log/grommunio-admin-api.log 2>/dev/null || true
 chmod 0775 /var/log/gromox 2>/dev/null || true
 chmod 0644 /var/log/gromox/*.log 2>/dev/null || true
+chmod 0644 /etc/logrotate.d/* 2>/dev/null || true
 chown -R www-data:www-data /var/lib/nginx /var/log/nginx /var/log/grommunio-sync /var/lib/grommunio-sync /var/lib/grommunio-web /run/php /var/lib/php/sessions 2>/dev/null || true
 chmod 0770 /var/lib/grommunio-web/session /var/lib/grommunio-web/tmp /var/lib/php/sessions 2>/dev/null || true
 

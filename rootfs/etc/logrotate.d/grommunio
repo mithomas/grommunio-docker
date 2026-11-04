@@ -1,0 +1,32 @@
+# Grommunio persistent service log rotation & 1-year retention policy
+
+/var/log/gromox/*.log
+{
+    su root gromox
+    weekly
+    rotate 53
+    maxage 365
+    maxsize 25M
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+}
+
+/var/log/exim4/*.log
+/var/log/rspamd/*.log
+/var/log/nginx/*.log
+/var/log/php*.log
+/var/log/grommunio-admin-api.log
+{
+    weekly
+    rotate 53
+    maxage 365
+    maxsize 25M
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+}

@@ -48,4 +48,19 @@ if [ "$RSPAMD_STATUS" != "200" ]; then
     exit 1
 fi
 
+# 5. Check persistent volume storage capacity (/var/log and /var/lib/gromox)
+# Fail if usage exceeds 95% or free space is below 100MB (102400 KB) to prevent silent mail delivery stoppage.
+LOW_SPACE=$(df -Pk /var/log /var/lib/gromox 2>/dev/null | awk 'NR > 1 {
+    pct = $5; sub(/%/, "", pct);
+    avail_kb = $4;
+    if (pct >= 95 || avail_kb < 102400) {
+        printf "%s (usage: %s%%, free: %d MB)\n", $6, pct, int(avail_kb / 1024);
+    }
+}')
+if [ -n "$LOW_SPACE" ]; then
+    echo "HEALTHCHECK FAILED: critically low disk space on persistent volumes:" >&2
+    echo "$LOW_SPACE" >&2
+    exit 1
+fi
+
 exit 0
