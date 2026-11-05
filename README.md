@@ -134,6 +134,7 @@ echo "IMAGE_NAME=mithomas/grommunio-docker:latest" >> .env
 ```bash
 docker compose build
 ```
+*(Optional: If building behind an SSL-inspecting corporate proxy, place your root `*.crt` file in `ca-certificates/` before building; it is git-ignored and automatically trusted during the build.)*
 
 ### 3. Start the Stack
 

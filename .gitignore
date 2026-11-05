@@ -3,3 +3,8 @@
 __pycache__/
 *.py[cod]
 
+# Custom local CA certificates for builds behind corporate proxies
+ca-certificates/*
+!ca-certificates/.gitkeep
+
+

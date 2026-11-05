@@ -7,7 +7,7 @@ ARG GROMMUNIO_REPO_URL=https://download.grommunio.com/community/Debian_13/
 ARG GROMMUNIO_REPO_SUITE=Debian_13
 
 # 1. Install prerequisites and configure Grommunio repository
-COPY rootfs/usr/local/share/ca-certificates/ /usr/local/share/ca-certificates/
+COPY ca-certificates/ /usr/local/share/ca-certificates/
 COPY rootfs/usr/share/keyrings/ /usr/share/keyrings/
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
