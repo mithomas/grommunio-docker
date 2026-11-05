@@ -3,44 +3,49 @@ set -eo pipefail
 
 echo "==> Initializing Grommunio container on Debian 13 (Trixie)..."
 
-# 1. Environment defaults
-export GROMMUNIO_HOST="${GROMMUNIO_HOST:-mail.example.com}"
-export GROMMUNIO_DOMAIN="${GROMMUNIO_DOMAIN:-example.com}"
-export DOMAINS="${DOMAINS:-}"
-export BAYES_SYNC_INTERVAL="${BAYES_SYNC_INTERVAL:-300}"
-export RELAY_HOST="${RELAY_HOST:-host.docker.internal}"
-export RELAY_PORT="${RELAY_PORT:-25}"
-export DB_HOST="${DB_HOST:-mariadb}"
-export DB_PORT="${DB_PORT:-3306}"
-export DB_SOCKET="${DB_SOCKET:-}"
-export DB_NAME="${DB_NAME:-grommunio}"
-export DB_USER="${DB_USER:-grommunio}"
-export DB_PASSWORD="${DB_PASSWORD:-grommunio_secret}"
-if [ -n "${DB_SOCKET}" ]; then
-    export DB_HOST="localhost"
-elif [ "${DB_HOST}" = "mariadb" ] && [ "${DB_PORT}" != "3306" ]; then
-    echo "==> Companion MariaDB detected on internal network; using container port 3306 (DB_PORT=${DB_PORT} maps host ingress)..."
-    export DB_PORT="3306"
-fi
-export ADMIN_PASSWORD="${ADMIN_PASSWORD:-admin}"
+# 1. Environment defaults & substitution variable table
+DEFAULTS_TABLE="
+GROMMUNIO_HOST=mail.example.com
+GROMMUNIO_DOMAIN=example.com
+DOMAINS=
+RELAY_HOST=host.docker.internal
+RELAY_PORT=25
+DB_HOST=mariadb
+DB_PORT=3306
+DB_SOCKET=
+DB_NAME=grommunio
+DB_USER=grommunio
+DB_PASSWORD=grommunio_secret
+ADMIN_PASSWORD=admin
+LDAP_HOST=ldap://ldap.example.com
+LDAP_START_TLS=false
+LDAP_BIND_USER=cn=admin,dc=example,dc=com
+LDAP_BIND_PASS=ldap_secret
+LDAP_SEARCH_BASE=dc=example,dc=com
+LDAP_USER_FILTER=(objectClass=posixAccount)
+LDAP_OBJECT_ID=entryUUID
+LDAP_MAIL_ATTR=mail
+LDAP_USER_ALIASES=mailAlternativeAddress
+LDAP_USER_DISPLAYNAME=displayName
+LDAP_USER_ALTNAME=uid
+LDAP_GROUP_MEMBER_ATTR=memberOf
+LDAP_GROUP_ADDR=mailPrimaryAddress
+LDAP_GROUP_FILTER=(objectclass=posixgroup)
+LDAP_GROUP_NAME=cn
+"
+
+VAR_LIST=""
+while IFS='=' read -r var default || [ -n "${var}" ]; do
+    [ -z "${var}" ] && continue
+    eval "export ${var}=\"\${${var}:-\${default}}\""
+    VAR_LIST="${VAR_LIST} \${${var}}"
+done <<< "${DEFAULTS_TABLE}"
+
+# Non-substituted daemon/script runtime variables
 export RSPAMD_PASSWORD="${RSPAMD_PASSWORD:-rspamd_secret}"
-export LDAP_ENABLED="${LDAP_ENABLED:-true}"
-export LDAP_HOST="${LDAP_HOST:-ldap://ldap.example.com}"
-export LDAP_START_TLS="${LDAP_START_TLS:-false}"
-export LDAP_BIND_USER="${LDAP_BIND_USER:-cn=admin,dc=example,dc=com}"
-export LDAP_BIND_PASS="${LDAP_BIND_PASS:-ldap_secret}"
-export LDAP_SEARCH_BASE="${LDAP_SEARCH_BASE:-dc=example,dc=com}"
-export LDAP_USER_FILTER="${LDAP_USER_FILTER:-(objectClass=posixAccount)}"
-export LDAP_OBJECT_ID="${LDAP_OBJECT_ID:-entryUUID}"
-export LDAP_MAIL_ATTR="${LDAP_MAIL_ATTR:-mail}"
-export LDAP_USER_ALIASES="${LDAP_USER_ALIASES:-mailAlternativeAddress}"
-export LDAP_USER_DISPLAYNAME="${LDAP_USER_DISPLAYNAME:-displayName}"
-export LDAP_USER_ALTNAME="${LDAP_USER_ALTNAME:-uid}"
-export LDAP_GROUP_MEMBER_ATTR="${LDAP_GROUP_MEMBER_ATTR:-memberOf}"
-export LDAP_GROUP_ADDR="${LDAP_GROUP_ADDR:-mailPrimaryAddress}"
-export LDAP_GROUP_FILTER="${LDAP_GROUP_FILTER:-(objectclass=posixgroup)}"
-export LDAP_GROUP_NAME="${LDAP_GROUP_NAME:-cn}"
 export TIMEZONE="${TIMEZONE:-UTC}"
+export BAYES_SYNC_INTERVAL="${BAYES_SYNC_INTERVAL:-300}"
+export LDAP_ENABLED="${LDAP_ENABLED:-true}"
 
 if [ "${LDAP_ENABLED}" = "true" ]; then
     export GROMOX_AUTH_BACKEND="ldap"
@@ -48,6 +53,14 @@ if [ "${LDAP_ENABLED}" = "true" ]; then
 else
     export GROMOX_AUTH_BACKEND="deny_all"
     export LDAP_DISABLED="true"
+fi
+VAR_LIST="${VAR_LIST} \${GROMOX_AUTH_BACKEND} \${LDAP_DISABLED}"
+
+if [ -n "${DB_SOCKET}" ]; then
+    export DB_HOST="localhost"
+elif [ "${DB_HOST}" = "mariadb" ] && [ "${DB_PORT}" != "3306" ]; then
+    echo "==> Companion MariaDB detected on internal network; using container port 3306 (DB_PORT=${DB_PORT} maps host ingress)..."
+    export DB_PORT="3306"
 fi
 
 # 2. Setup tmpfs directories
@@ -58,9 +71,16 @@ fi
 mkdir -p /var/log/gromox /var/log/supervisor /var/log/nginx /var/log/grommunio-sync /var/log/redis /var/log/rspamd /var/log/exim4
 mkdir -p /var/lib/nginx/body /var/lib/nginx/fastcgi /var/lib/nginx/proxy /var/lib/nginx/scgi /var/lib/nginx/uwsgi
 mkdir -p /var/lib/gromox/queue /var/lib/redis /var/lib/rspamd /var/lib/grommunio-admin-common /var/lib/grommunio-admin-api /var/lib/grommunio-web/session /var/lib/grommunio-web/tmp /var/lib/php/sessions
-mkdir -p /var/spool/exim4 /etc/exim4
-mkdir -p /etc/gromox /etc/grommunio-admin-api/conf.d /etc/grommunio-admin-common
-touch /var/log/exim4/mainlog /var/log/php8.4-fpm.log /var/log/grommunio-admin-api.log
+mkdir -p /var/spool/exim4 /etc/exim4 /etc/gromox /etc/grommunio-admin-api/conf.d /etc/grommunio-admin-common
+
+# Create service log files dynamically for active PHP version
+touch /var/log/exim4/mainlog /var/log/grommunio-admin-api.log
+for php_conf in /etc/php/*/fpm/php-fpm.conf; do
+    if [ -f "${php_conf}" ]; then
+        php_log=$(awk -F'= ' '/^error_log/ {print $2}' "${php_conf}" | tr -d ' ')
+        [ -n "${php_log}" ] && touch "${php_log}"
+    fi
+done
 
 # Ensure persistent JWT RSA keypair exists for Admin API to prevent multi-worker signature mismatch
 if [ ! -f /var/lib/grommunio-admin-api/auth-private.pem ] || [ ! -f /var/lib/grommunio-admin-api/auth-public.pem ]; then
@@ -79,31 +99,32 @@ if [ -z "${RSPAMD_HASH}" ]; then
     exit 1
 fi
 echo "password = \"${RSPAMD_HASH}\";" > /run/rspamd/worker-controller-password.inc
-chmod 0640 /run/rspamd/worker-controller-password.inc 2>/dev/null || true
-chown _rspamd:_rspamd /run/rspamd/worker-controller-password.inc 2>/dev/null || true
+chmod 0640 /run/rspamd/worker-controller-password.inc
+chown _rspamd:_rspamd /run/rspamd/worker-controller-password.inc
 
 # Export timezone for processes
 export TZ="${TIMEZONE:-UTC}"
 
 # 3. Render configurations from templates
 echo "==> Templating configuration files..."
-if [ -d /etc/grommunio-admin-api.dist ]; then
-    cp -a /etc/grommunio-admin-api.dist/. /etc/grommunio-admin-api/ 2>/dev/null || true
-fi
-mkdir -p /etc/grommunio-admin-api/conf.d
+render_dir() {
+    local src="$1" dst="$2"
+    mkdir -p "${dst}"
+    for tmpl in "${src}"/*.template; do
+        [ -f "${tmpl}" ] || continue
+        local fname
+        fname=$(basename "${tmpl}" .template)
+        envsubst "${VAR_LIST}" < "${tmpl}" > "${dst}/${fname}"
+    done
+}
 
-VAR_LIST='$GROMMUNIO_HOST $GROMMUNIO_DOMAIN $DOMAINS $RELAY_HOST $RELAY_PORT $DB_HOST $DB_PORT $DB_SOCKET $DB_NAME $DB_USER $DB_PASSWORD $ADMIN_PASSWORD $GROMOX_AUTH_BACKEND $LDAP_DISABLED $LDAP_HOST $LDAP_START_TLS $LDAP_BIND_USER $LDAP_BIND_PASS $LDAP_SEARCH_BASE $LDAP_USER_FILTER $LDAP_OBJECT_ID $LDAP_MAIL_ATTR $LDAP_USER_ALIASES $LDAP_USER_DISPLAYNAME $LDAP_USER_ALTNAME $LDAP_GROUP_MEMBER_ATTR $LDAP_GROUP_ADDR $LDAP_GROUP_FILTER $LDAP_GROUP_NAME'
+render_dir /etc/gromox.dist /etc/gromox
+render_dir /etc/exim4.dist /etc/exim4
+render_dir /etc/grommunio-admin-common.dist /etc/grommunio-admin-common
 
-envsubst "${VAR_LIST}" < /etc/gromox.dist/gromox.cfg.template > /etc/gromox/gromox.cfg
-envsubst "${VAR_LIST}" < /etc/gromox.dist/smtp.cfg.template > /etc/gromox/smtp.cfg
-envsubst "${VAR_LIST}" < /etc/gromox.dist/mysql_adaptor.cfg.template > /etc/gromox/mysql_adaptor.cfg
-envsubst "${VAR_LIST}" < /etc/gromox.dist/ldap_adaptor.cfg.template > /etc/gromox/ldap_adaptor.cfg
-envsubst "${VAR_LIST}" < /etc/gromox.dist/http.cfg.template > /etc/gromox/http.cfg
-envsubst "${VAR_LIST}" < /etc/gromox.dist/delivery.cfg.template > /etc/gromox/delivery.cfg
-envsubst "${VAR_LIST}" < /etc/gromox.dist/zcore.cfg.template > /etc/gromox/zcore.cfg
-envsubst "${VAR_LIST}" < /etc/gromox.dist/event.cfg.template > /etc/gromox/event.cfg
-envsubst "${VAR_LIST}" < /etc/gromox.dist/timer.cfg.template > /etc/gromox/timer.cfg
-envsubst "${VAR_LIST}" < /etc/gromox.dist/midb.cfg.template > /etc/gromox/midb.cfg
+cp -a /etc/grommunio-admin-api.dist/. /etc/grommunio-admin-api/
+[ -f /etc/grommunio-admin-api/uwsgi.ini ] && cp -f /etc/grommunio-admin-api/uwsgi.ini /etc/grommunio-admin-api/conf.d/
+[ -f /etc/grommunio-admin-api/antispam.yaml ] && cp -f /etc/grommunio-admin-api/antispam.yaml /etc/grommunio-admin-api/conf.d/
 
 python3 -c "
 import os, yaml
@@ -119,32 +140,6 @@ config = {
 with open('/etc/grommunio-admin-api/conf.d/database.yaml', 'w') as f:
     yaml.dump(config, f, default_flow_style=False)
 "
-cp -f /etc/grommunio-admin-api.dist/uwsgi.ini /etc/grommunio-admin-api/conf.d/uwsgi.ini 2>/dev/null || true
-if [ -f /etc/grommunio-admin-api.dist/antispam.yaml ]; then
-    cp -f /etc/grommunio-admin-api.dist/antispam.yaml /etc/grommunio-admin-api/conf.d/antispam.yaml 2>/dev/null || true
-fi
-if [ -f /etc/grommunio-admin-api.dist/conf.d/logs.yaml ]; then
-    cp -f /etc/grommunio-admin-api.dist/conf.d/logs.yaml /etc/grommunio-admin-api/conf.d/logs.yaml 2>/dev/null || true
-fi
-
-# Exim configuration
-mkdir -p /etc/exim4
-if [ -d /etc/exim4.dist ]; then
-    cp -a /etc/exim4.dist/. /etc/exim4/ 2>/dev/null || true
-fi
-if [ -f /etc/exim4.dist/exim4.conf.template ]; then
-    envsubst "${VAR_LIST}" < /etc/exim4.dist/exim4.conf.template > /etc/exim4/exim4.conf
-fi
-chmod 0644 /etc/exim4/exim4.conf 2>/dev/null || true
-
-mkdir -p /etc/grommunio-admin-common
-if [ -d /etc/grommunio-admin-common.dist ]; then
-    cp -a /etc/grommunio-admin-common.dist/. /etc/grommunio-admin-common/ 2>/dev/null || true
-fi
-if [ -f /etc/grommunio-admin-common.dist/config.json.template ]; then
-    envsubst "${VAR_LIST}" < /etc/grommunio-admin-common.dist/config.json.template > /etc/grommunio-admin-common/config.json
-fi
-chmod 0644 /etc/grommunio-admin-common/config.json 2>/dev/null || true
 
 # 4. Wait for MariaDB database connectivity
 MAX_RETRIES=45
@@ -278,10 +273,11 @@ else
     /usr/local/bin/grommunio-fix-permissions.sh shallow
 fi
 
-# 8. Trigger background mailbox creation defaults initialization
+# 11. Trigger background mailbox creation defaults initialization
 if [ -x /usr/local/bin/grommunio-init-defaults.py ] || [ -f /usr/local/bin/grommunio-init-defaults.py ]; then
     python3 /usr/local/bin/grommunio-init-defaults.py &
 fi
 
+# 12. Start Supervisor daemon
 echo "==> Configuration complete. Starting Supervisor..."
 exec /usr/bin/supervisord -c /etc/supervisor/supervisord.conf

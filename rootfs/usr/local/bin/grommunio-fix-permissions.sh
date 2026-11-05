@@ -69,6 +69,10 @@ for p in /var/lib/grommunio-admin-common /var/lib/grommunio-admin-api /etc/gromm
         chown -R grommunio:grommunio "${p}" 2>/dev/null || true
     fi
 done
+if [ -S /run/grommunio-admin-api/uwsgi.sock ]; then
+    chown grommunio:www-data /run/grommunio-admin-api/uwsgi.sock 2>/dev/null || true
+    chmod 0660 /run/grommunio-admin-api/uwsgi.sock 2>/dev/null || true
+fi
 if [ -f /var/log/grommunio-admin-api.log ]; then
     chown grommunio:grommunio /var/log/grommunio-admin-api.log 2>/dev/null || true
     chmod 0644 /var/log/grommunio-admin-api.log 2>/dev/null || true
