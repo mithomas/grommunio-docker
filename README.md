@@ -115,6 +115,7 @@ chmod 600 .env.secrets
 - `HTTP_PORT` (`8080`), `ADMIN_PORT` (`8081`), `RSPAMD_PORT` (`11334`), `SMTP_PORT` (`2525`), `LDAP_PORT` (`389`): Host ingress ports.
 - `DB_HOST` & `DB_PORT` **or** `DB_SOCKET`: MariaDB TCP endpoint or mounted Unix socket (`/run/mysqld/mysqld.sock`).
 - `DB_NAME`, `DB_USER`, `LDAP_HOST`, `LDAP_BIND_USER`, `LDAP_SEARCH_BASE`: Database and OpenLDAP settings.
+- `DB_WAIT_RETRIES` (`45`): Startup database connection attempts, 2 s apart, before the container exits with an error.
 
 **Secrets (`.env.secrets`):**
 - `DB_PASSWORD`: MariaDB user password (`DB_ROOT_PASSWORD` is only for `--profile test`; omit in production).
@@ -371,6 +372,7 @@ A standalone test suite validating all container services, endpoints, credential
 | **`tests/test_db_socket.py`** | Validates `DB_SOCKET` Unix socket handling and DB-free Exim domain routing. |
 | **`tests/test_password_escaping.py`** | Validates passwords with special characters ($, #, ', ", \, ;) in Rspamd hashing and default-credential gating. |
 | **`tests/test_db_init_safety.py`** | Validates the live schema is populated and `gromox-dbop -U` re-runs cleanly. |
+| **`tests/test_startup_safety.py`** | Validates default-credential refusal, DB failure diagnostics, SIGTERM during the schema lock (exit 143), and idempotent restart (throwaway containers). |
 | **`tests/test_log_retention.py`** | Validates the Admin UI log reader (formats, `after` filter, rotated-log fallback) and the logrotate dry run. |
 | **`tests/test_mailbox_ownership.py`** | Validates gromox ownership of the mailbox volume and the repair script. |
 | **`tests/test_bayes_sync.py`** | Validates batched Bayes sync engine, spam/ham/trash transitions, and scan cost. |
@@ -398,7 +400,7 @@ Two GitHub Actions workflows automate container builds, integration testing, and
 ### Quality Gate (Integration Testing)
 Before any image is pushed to Docker Hub:
 - Docker Buildx builds the image for `linux/amd64` and starts the test stack (`docker compose --profile test up -d`).
-- Container health is verified via `/usr/local/bin/container-healthcheck.sh` and all 17 verification tests (`python3 tests/run_all.py`) run in CI.
+- Container health is verified via `/usr/local/bin/container-healthcheck.sh` and all 18 verification tests (`python3 tests/run_all.py`) run in CI.
 - Publication to Docker Hub only proceeds if 100% of tests pass.
 
 ### Image Tagging Convention

@@ -25,6 +25,7 @@ TESTS = [
     ("test_db_socket.py", "MariaDB Unix Socket (DB_SOCKET) & Exim DB-Free Routing"),
     ("test_password_escaping.py", "Password Special Characters & Direct Controller Auth"),
     ("test_db_init_safety.py", "Database Schema & Migration Idempotence"),
+    ("test_startup_safety.py", "Startup Safety (Credentials, DB Failure, SIGTERM, Restart)"),
     ("test_log_retention.py", "Persistent Log Growth Bounding & 1-Year Retention"),
     ("test_mailbox_ownership.py", "Mailbox Volume Ownership Optimization & Repair"),
     ("test_bayes_sync.py", "Bayes Synchronization Engine & Scan Cost Reduction"),

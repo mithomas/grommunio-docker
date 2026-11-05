@@ -159,7 +159,7 @@ with open('/etc/grommunio-admin-api/conf.d/database.yaml', 'w') as f:
 "
 
 # 4. Wait for MariaDB database connectivity
-MAX_RETRIES=45
+MAX_RETRIES="${DB_WAIT_RETRIES:-45}"
 COUNT=0
 if [ -n "${DB_SOCKET}" ]; then
     echo "==> Checking database connection via Unix socket ${DB_SOCKET}..."
@@ -196,6 +196,8 @@ cleanup_db_lock() {
         echo "==> Releasing MariaDB schema advisory lock..."
         exec {DB_LOCK_COPROC[1]}>&- 2>/dev/null || true
         exec {DB_LOCK_COPROC[0]}<&- 2>/dev/null || true
+        # A GET_LOCK still waiting on another replica ignores EOF, so stop the client explicitly.
+        pkill -P "${DB_LOCK_COPROC_PID}" 2>/dev/null || true
         wait "${DB_LOCK_COPROC_PID}" 2>/dev/null || true
         unset DB_LOCK_COPROC_PID
     fi

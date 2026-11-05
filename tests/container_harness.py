@@ -101,7 +101,7 @@ class Container:
         if scratch is not None:
             base.update(DB_NAME=scratch.name, DB_USER=scratch.user, DB_PASSWORD=scratch.password)
         else:
-            base["DB_HOST"] = "db.invalid"
+            base.update(DB_HOST="db.invalid", DB_PASSWORD=secrets.token_urlsafe(12))
         # Non-default credentials so the secure-password gate passes unless a test overrides them.
         base.update(ADMIN_PASSWORD=secrets.token_urlsafe(12), RSPAMD_PASSWORD=secrets.token_urlsafe(12),
                     LDAP_BIND_PASS=secrets.token_urlsafe(12))
