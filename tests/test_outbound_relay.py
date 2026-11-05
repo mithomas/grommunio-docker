@@ -262,9 +262,13 @@ def check_outbound_relay():
                 print("    [>] 5. Resuming capture server and forcing spool queue delivery (exim -qff)...")
                 capture.resume()
 
-                c.exec("exim", "-qff")
+                def check_and_flush():
+                    if any(subject_b in m.get("data", "") for m in capture.messages()):
+                        return True
+                    c.exec("exim", "-qff")
+                    return any(subject_b in m.get("data", "") for m in capture.messages())
 
-                delivered_b = wait_until(lambda: any(subject_b in m.get("data", "") for m in capture.messages()), 30, 1.0)
+                delivered_b = wait_until(check_and_flush, 30, 2.0)
                 if not delivered_b:
                     print("[-] FAIL: Queued message was not delivered after capture server resumed.", file=sys.stderr)
                     return False

@@ -97,6 +97,7 @@ services:
       - /bin/sh
       - -c
       - |
+        export LDAP_PORT="389"
         export LDAP_ORGANISATION="Example Org"
         export LDAP_DOMAIN="$${GROMMUNIO_DOMAIN:-example.com}"
         export LDAP_BASE_DN="$${LDAP_SEARCH_BASE:-dc=example,dc=com}"
