@@ -17,6 +17,7 @@ All functional verification checks performed during development are codified as 
 
 | Script | Test Scope | Verification Target |
 | :--- | :--- | :--- |
+| **`tests/test_lint.py`** | Static Lint Gate & Fail-Safe Verifications | Validates entrypoint fail-safe commands (no masked DB init or passwd errors), ShellCheck compliance (-S warning), Python syntax compilation (`py_compile`), and Docker Hub README size limit. |
 | **`tests/test_endpoints.py`** | HTTP Ingress & Content-Types | Validates status codes, headers, and MIME types across Webmail (`:8080`), ActiveSync (`:8080`), Admin Web UI (`:8081`), `config.json` (`:8081`), Admin API status (`:8081`), and Rspamd Dashboard (`:11334`). |
 | **`tests/test_webmail_security.py`** | Webmail Root Ingress & Cookie Security | Validates Webmail delivery at root (`:8080`), absence of PHP configuration errors, `secure`/`HttpOnly` cookies, static assets, and logon/Origin handling. |
 | **`tests/test_admin_auth.py`** | Admin API & JWT Authentication | Tests login credential validation, JWT token issuance, access to protected endpoints, and rejection of missing or forged tokens (401). |
@@ -46,6 +47,7 @@ python3 tests/run_all.py
 
 Run an individual test directly:
 ```bash
+python3 tests/test_lint.py
 python3 tests/test_endpoints.py
 python3 tests/test_webmail_security.py
 python3 tests/test_admin_auth.py

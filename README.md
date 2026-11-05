@@ -360,6 +360,7 @@ A standalone test suite validating all container services, endpoints, credential
 
 | Test Script | Scope |
 | :--- | :--- |
+| **`tests/test_lint.py`** | Static lint gate: fail-safe entrypoint commands, ShellCheck compliance, Python compile, and README size. |
 | **`tests/test_endpoints.py`** | Validates HTTP status codes and MIME types across `:8080`, `:8081`, and `:11334`. |
 | **`tests/test_webmail_security.py`** | Validates root Webmail delivery, secure cookies, static assets, and logon/Origin handling. |
 | **`tests/test_admin_auth.py`** | Verifies Admin API authentication, JWT issuance, protected endpoints, and rejection of missing or forged tokens. |

@@ -12,6 +12,7 @@ import sys
 from env_helper import SKIP_EXIT
 
 TESTS = [
+    ("test_lint.py", "Static Lint Gate & Fail-Safe Verifications"),
     ("test_endpoints.py", "HTTP Ingress Endpoints & Content-Types"),
     ("test_admin_auth.py", "Grommunio Admin API & JWT Auth"),
     ("test_rspamd_auth.py", "Rspamd Dashboard Dedicated Auth"),

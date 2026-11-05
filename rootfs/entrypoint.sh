@@ -1,4 +1,5 @@
 #!/bin/bash
+# shellcheck shell=bash
 set -eo pipefail
 
 echo "==> Initializing Grommunio container on Debian 13 (Trixie)..."
@@ -194,7 +195,9 @@ echo "==> Acquiring MariaDB schema migration advisory lock..."
 cleanup_db_lock() {
     if [ -n "${DB_LOCK_COPROC_PID:-}" ] && kill -0 "${DB_LOCK_COPROC_PID}" 2>/dev/null; then
         echo "==> Releasing MariaDB schema advisory lock..."
+        # shellcheck disable=SC2188
         exec {DB_LOCK_COPROC[1]}>&- 2>/dev/null || true
+        # shellcheck disable=SC2188
         exec {DB_LOCK_COPROC[0]}<&- 2>/dev/null || true
         # A GET_LOCK still waiting on another replica ignores EOF, so stop the client explicitly.
         pkill -P "${DB_LOCK_COPROC_PID}" 2>/dev/null || true
@@ -202,6 +205,7 @@ cleanup_db_lock() {
         unset DB_LOCK_COPROC_PID
     fi
 }
+# shellcheck disable=SC2034
 coproc DB_LOCK_COPROC {
     trap - EXIT INT TERM
     db --unbuffered -sN
