@@ -20,6 +20,7 @@ TESTS = [
     ("test_ldap.py", "OpenLDAP Integration & User Downsync"),
     ("test_webmail_security.py", "Webmail Root Ingress & Cookie Security"),
     ("test_mail_pipeline.py", "Exim -> Rspamd -> Gromox Pipeline & Spam History"),
+    ("test_outbound_relay.py", "Outbound Smarthost Relay & Queue Spool Retention"),
     ("test_live_status.py", "Admin UI Live Status & Nginx VTS Telemetry"),
     ("test_monitoring_logs.py", "Admin UI Monitoring Logs (Exim & Daemons)"),
     ("test_defaults.py", "Mailbox Creation Defaults & Privileges"),

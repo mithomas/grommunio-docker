@@ -23,6 +23,7 @@ All functional verification checks performed during development are codified as 
 | **`tests/test_admin_auth.py`** | Admin API & JWT Authentication | Tests login credential validation, JWT token issuance, access to protected endpoints, and rejection of missing or forged tokens (401). |
 | **`tests/test_rspamd_auth.py`** | Rspamd Dedicated Authentication | Tests that unauthenticated requests to `:11334` are rejected and that valid authentication (`RSPAMD_PASSWORD`) grants access to Rspamd controller endpoints (`/auth`, `/stat`). |
 | **`tests/test_mail_pipeline.py`** | End-to-End Mail & Spam Pipeline | Injects an SMTP test email into container Exim (`:2525`), confirms delivery into the mailbox via Rspamd and Gromox LMTP (`:24`), asserts the message's **Spam History** record, and checks that a GTUBE message is rejected (550) and not delivered. |
+| **`tests/test_outbound_relay.py`** | Outbound Smarthost Relay & Spool Retention | Validates outbound relay to smarthost, message spool queue retention during relay outage, and delivery upon recovery (throwaway containers). |
 | **`tests/test_live_status.py`** | Admin UI Live Status & VTS Telemetry | Validates `/system/vhostStatus/local` endpoint, verifies prevention of 502 Bad Gateway via header sanitization, and confirms Nginx VTS telemetry payload structure. |
 | **`tests/test_monitoring_logs.py`** | Admin UI Monitoring Logs | Validates file-based log readers in Admin UI Monitoring tab (`/system/logs`), verifies Exim log replaces Postfix, and confirms entry formatting and time filters. |
 | **`tests/test_defaults.py`** | Mailbox Creation Defaults & Privileges | Validates that Admin API creation defaults (`/defaults/createParams`) reflect configured defaults (language, protocols, services, integrations, quotas). |
@@ -53,6 +54,7 @@ python3 tests/test_webmail_security.py
 python3 tests/test_admin_auth.py
 python3 tests/test_rspamd_auth.py
 python3 tests/test_mail_pipeline.py
+python3 tests/test_outbound_relay.py
 python3 tests/test_live_status.py
 python3 tests/test_monitoring_logs.py
 python3 tests/test_defaults.py
