@@ -9,7 +9,7 @@ Verification Test: Admin API LDAP Configuration & Disk Persistence
 import copy
 import sys
 
-from env_helper import admin_session, api, container_exec
+from env_helper import admin_session, api, container_exec, wait_until
 
 CFG_PATH = "/etc/gromox/ldap_adaptor.cfg"
 PUT_PATH = "/system/mconf/ldap?force=true"
@@ -58,8 +58,7 @@ def check_ldap_config():
             print(f"    [-] PUT /system/mconf/ldap failed with HTTP {status}: {body}", file=sys.stderr)
             return False
 
-        _, body = api("GET", "/system/mconf/ldap", session=session)
-        if body["data"]["users"]["displayName"] != new_value:
+        if not wait_until(lambda: (api("GET", "/system/mconf/ldap", session=session)[1] or {}).get("data", {}).get("users", {}).get("displayName") == new_value, 5):
             print("    [-] Changed value was not returned by the next GET.", file=sys.stderr)
             return False
         if cfg_value("ldap_user_displayname") != new_value:
