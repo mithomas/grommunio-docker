@@ -11,6 +11,8 @@ import subprocess
 import sys
 import tempfile
 
+from env_helper import container_exec, ensure_testuser, mailbox_contains, mailbox_dir, send_mail, wait_until
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPT = os.path.join(ROOT, "rootfs", "usr", "local", "bin", "grommunio-bayes-sync.py")
 
@@ -294,6 +296,129 @@ def test_large_mailbox_unchanged_triggers_no_learning(fx):
     assert len(fx.calls()) == 1000
     fx.run()
     assert fx.calls() == []
+
+
+def test_live_bayes_lifecycle():
+    # 1. Check container availability
+    res = container_exec("true")
+    if res.returncode != 0:
+        if os.environ.get("CI", "").lower() in ("1", "true", "yes"):
+            raise AssertionError("Grommunio container is not running under CI")
+        print("    [!] Container not running locally, skipping live Bayes test.")
+        return
+
+    # 2. Ensure test user mailbox exists
+    rcpt = ensure_testuser()
+    mbox_dir = mailbox_dir(rcpt)
+    assert mbox_dir, f"Could not find mailbox directory for {rcpt}"
+    user_db = f"{mbox_dir}/exmdb/exchange.sqlite3"
+
+    # 3. Inject message 1 (for spam -> ham transition)
+    sub1 = f"LiveBayes1-{os.urandom(4).hex()}"
+    send_mail(rcpt, subject=sub1, body="Message 1 for live Bayes ham transition.")
+    assert wait_until(lambda: mailbox_contains(rcpt, sub1), timeout=15, interval=1.0), "Message 1 not delivered"
+
+    # 4. Inject message 2 (for spam -> deleted items pruning)
+    sub2 = f"LiveBayes2-{os.urandom(4).hex()}"
+    send_mail(rcpt, subject=sub2, body="Message 2 for live Bayes pruning.")
+    assert wait_until(lambda: mailbox_contains(rcpt, sub2), timeout=15, interval=1.0), "Message 2 not delivered"
+
+    def find_id(subject):
+        find_script = f"""
+import sqlite3
+c = sqlite3.connect("file:{user_db}?mode=ro", uri=True)
+row = c.execute("SELECT m.message_id FROM message_properties p JOIN messages m USING (message_id) WHERE p.proptag = 236781599 AND p.propval LIKE '%{subject}%'").fetchone()
+print(row[0] if row else "")
+"""
+        res = container_exec("python3", "-", input=find_script)
+        assert res.returncode == 0 and res.stdout.strip(), f"Could not find message_id for {subject}: {res.stderr}"
+        return int(res.stdout.strip())
+
+    id1 = find_id(sub1)
+    id2 = find_id(sub2)
+
+    def get_type(mid):
+        check_script = f"""
+import sqlite3
+c = sqlite3.connect("file:/var/lib/rspamd/bayes_learned.sqlite3?mode=ro", uri=True)
+row = c.execute("SELECT learned_type FROM learned_messages WHERE message_id = {mid}").fetchone()
+print(row[0] if row else "NONE")
+"""
+        res = container_exec("python3", "-", input=check_script)
+        return res.stdout.strip() if res.returncode == 0 else "ERROR"
+
+    try:
+        # Move both messages to Junk (parent_fid = 23)
+        move_to_junk = f"""
+import sqlite3
+c = sqlite3.connect("{user_db}")
+max_cn = c.execute("SELECT COALESCE(MAX(change_number), 0) FROM messages").fetchone()[0]
+c.execute("UPDATE messages SET parent_fid = 23, change_number = ? WHERE message_id = ?", (max_cn + 1, {id1}))
+c.execute("UPDATE messages SET parent_fid = 23, change_number = ? WHERE message_id = ?", (max_cn + 2, {id2}))
+c.commit()
+"""
+        res_m = container_exec("python3", "-", input=move_to_junk)
+        assert res_m.returncode == 0, f"Failed to move messages to Junk: {res_m.stderr}"
+
+        # Run bayes sync
+        sync_res = container_exec("python3", "/usr/local/bin/grommunio-bayes-sync.py")
+        assert sync_res.returncode == 0, f"bayes-sync failed: {sync_res.stderr}"
+
+        # Both should be learned as spam
+        assert get_type(id1) == "spam", f"Expected 'spam' for msg 1, got {get_type(id1)}"
+        assert get_type(id2) == "spam", f"Expected 'spam' for msg 2, got {get_type(id2)}"
+
+        # Case 1: Move msg 1 from Junk to Inbox (parent_fid = 13) -> re-learned as ham
+        move_inbox = f"""
+import sqlite3
+c = sqlite3.connect("{user_db}")
+max_cn = c.execute("SELECT COALESCE(MAX(change_number), 0) FROM messages").fetchone()[0]
+c.execute("UPDATE messages SET parent_fid = 13, change_number = ? WHERE message_id = ?", (max_cn + 1, {id1}))
+c.commit()
+"""
+        res_m1 = container_exec("python3", "-", input=move_inbox)
+        assert res_m1.returncode == 0, f"Failed to move msg 1 to Inbox: {res_m1.stderr}"
+
+        # Case 2: Move msg 2 from Junk to Deleted Items (parent_fid = 11) -> pruned
+        move_del = f"""
+import sqlite3
+c = sqlite3.connect("{user_db}")
+max_cn = c.execute("SELECT COALESCE(MAX(change_number), 0) FROM messages").fetchone()[0]
+c.execute("UPDATE messages SET parent_fid = 11, change_number = ? WHERE message_id = ?", (max_cn + 1, {id2}))
+c.commit()
+"""
+        res_m2 = container_exec("python3", "-", input=move_del)
+        assert res_m2.returncode == 0, f"Failed to move msg 2 to Deleted Items: {res_m2.stderr}"
+
+        # Run bayes sync
+        sync_res2 = container_exec("python3", "/usr/local/bin/grommunio-bayes-sync.py")
+        assert sync_res2.returncode == 0, f"bayes-sync failed: {sync_res2.stderr}"
+
+        # Assert msg 1 re-learned as ham, msg 2 pruned
+        assert get_type(id1) == "ham", f"Expected 'ham' for msg 1, got {get_type(id1)}"
+        assert get_type(id2) == "NONE", f"Expected pruned (NONE) for msg 2, got {get_type(id2)}"
+
+    finally:
+        cleanup_script = f"""
+import sqlite3
+try:
+    c = sqlite3.connect("{user_db}")
+    c.execute("DELETE FROM messages WHERE message_id IN ({id1}, {id2})")
+    c.execute("DELETE FROM message_properties WHERE message_id IN ({id1}, {id2})")
+    c.commit()
+except Exception:
+    pass
+
+try:
+    s = sqlite3.connect("/var/lib/rspamd/bayes_learned.sqlite3")
+    s.execute("DELETE FROM learned_messages WHERE message_id IN ({id1}, {id2})")
+    s.commit()
+except Exception:
+    pass
+"""
+        container_exec("python3", "-", input=cleanup_script)
+
+    print("    [+] test_live_bayes_lifecycle")
 
 
 def main():
