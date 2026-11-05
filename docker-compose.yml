@@ -61,11 +61,15 @@ services:
     env_file:
       - .env
       - .env.secrets
-    environment:
-      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-root_secret}
-      MARIADB_DATABASE: ${DB_NAME:-grommunio}
-      MARIADB_USER: ${DB_USER:-grommunio}
-      MARIADB_PASSWORD: ${DB_PASSWORD:-grommunio_secret}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        export MARIADB_ROOT_PASSWORD="$${DB_ROOT_PASSWORD:-root_secret}"
+        export MARIADB_DATABASE="$${DB_NAME:-grommunio}"
+        export MARIADB_USER="$${DB_USER:-grommunio}"
+        export MARIADB_PASSWORD="$${DB_PASSWORD:-grommunio_secret}"
+        exec docker-entrypoint.sh mariadbd
     volumes:
       - mariadb_data:/var/lib/mysql:rw
     ports:
@@ -89,14 +93,17 @@ services:
     env_file:
       - .env
       - .env.secrets
-    command: ["--copy-service"]
-    environment:
-      LDAP_ORGANISATION: "Example Org"
-      LDAP_DOMAIN: ${GROMMUNIO_DOMAIN:-example.com}
-      LDAP_BASE_DN: ${LDAP_SEARCH_BASE:-dc=example,dc=com}
-      LDAP_ADMIN_PASSWORD: ${LDAP_BIND_PASS:-ldap_secret}
-      LDAP_RFC2307BIS: "true"
-      LDAP_REMOVE_CONFIG_AFTER_SETUP: "false"
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        export LDAP_ORGANISATION="Example Org"
+        export LDAP_DOMAIN="$${GROMMUNIO_DOMAIN:-example.com}"
+        export LDAP_BASE_DN="$${LDAP_SEARCH_BASE:-dc=example,dc=com}"
+        export LDAP_ADMIN_PASSWORD="$${LDAP_BIND_PASS:-ldap_secret}"
+        export LDAP_RFC2307BIS="true"
+        export LDAP_REMOVE_CONFIG_AFTER_SETUP="false"
+        exec /container/tool/run --copy-service
     volumes:
       - ./ldap-bootstrap:/container/service/slapd/assets/config/bootstrap/ldif/custom
       - ldap_data:/var/lib/ldap
