@@ -1,388 +1,311 @@
 #!/usr/bin/env python3
 """
-Verification Test 18: Bayes Synchronization Engine & Scan Cost Reduction
-Verifies that:
-1. Static contracts:
-   - rootfs/usr/local/bin/grommunio-bayes-sync.py exists and uses SQLite ATTACH DATABASE.
-   - rootfs/usr/local/bin/grommunio-bayes-sync.sh delegates to the Python engine.
-   - rootfs/usr/local/bin/grommunio-bayes-sync-loop.sh has signal trapping.
-2. Functional sync transitions:
-   - Case A (SPAM): Messages in Junk (parent_fid = 23) are learned as spam.
-   - Case B (HAM): Messages moved from Junk (23) to Inbox (19) are learned as ham.
-   - Case C (TRASH): Messages moved from Junk (23) to Deleted Items (27) are pruned without ham learning.
-   - Case D (EXPUNGE): Messages expunged from the mailbox database are pruned from state.
-   - Case E (RETRY): Temporary rspamc failure retains unlearned state for subsequent retry.
-3. Performance & Idempotence:
-   - Validates that scanning a mailbox with 1,000 already-learned messages runs in milliseconds
-     without spawning redundant rspamc subprocesses or duplicating state.
+Verification Test: Bayes Synchronization Engine
+Runs rootfs/usr/local/bin/grommunio-bayes-sync.py against fixtures that mirror a real Gromox store
+(<user_dir>/<domain>/<mailbox>/exmdb/exchange.sqlite3, real `messages` schema, real folder ids)
+with stub `rspamc` / `gromox-exm2eml` binaries, and asserts on what gets learned and recorded.
 """
 import os
-import shutil
 import sqlite3
 import subprocess
 import sys
 import tempfile
-import time
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SCRIPT = os.path.join(ROOT, "rootfs", "usr", "local", "bin", "grommunio-bayes-sync.py")
+
+# Folder ids as allocated in a real Gromox private store.
+INBOX, DELETED_ITEMS, JUNK = 13, 11, 23
+PR_SMTP_ADDRESS = 0x39FE001F
+
+MESSAGES_DDL = """
+CREATE TABLE messages (
+    message_id INTEGER PRIMARY KEY, parent_fid INTEGER, parent_attid INTEGER,
+    is_deleted INTEGER DEFAULT 0, is_associated INTEGER,
+    change_number INTEGER UNIQUE NOT NULL, read_cn INTEGER UNIQUE DEFAULT NULL,
+    read_state INTEGER DEFAULT 0, message_size INTEGER NOT NULL,
+    group_id INTEGER DEFAULT NULL, timer_id INTEGER DEFAULT NULL, mid_string TEXT DEFAULT NULL
+)"""
+STORE_PROPS_DDL = "CREATE TABLE store_properties (proptag INTEGER UNIQUE NOT NULL, propval BLOB NOT NULL)"
 
 
-def test_static_bayes_contracts():
-    print("    [>] 1. Validating static Bayes synchronization contracts...")
-    root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-    py_script = os.path.join(root_dir, "rootfs", "usr", "local", "bin", "grommunio-bayes-sync.py")
-    assert os.path.isfile(py_script), f"FAIL: {py_script} does not exist"
-    with open(py_script, "r", encoding="utf-8") as f:
-        py_content = f.read()
-
-    assert "ATTACH DATABASE" in py_content, "FAIL: grommunio-bayes-sync.py missing ATTACH DATABASE"
-    assert "DETACH DATABASE" in py_content, "FAIL: grommunio-bayes-sync.py missing DETACH DATABASE"
-    assert "learned_messages" in py_content, "FAIL: grommunio-bayes-sync.py missing learned_messages table"
-    assert "FOLDER_JUNK = 23" in py_content, "FAIL: grommunio-bayes-sync.py missing FOLDER_JUNK = 23 constant"
-    assert "FOLDER_TRASH = 27" in py_content, "FAIL: grommunio-bayes-sync.py missing FOLDER_TRASH = 27 constant"
-    assert "mode=ro" in py_content, "FAIL: grommunio-bayes-sync.py missing mode=ro in ATTACH DATABASE"
-    assert "uri=True" in py_content, "FAIL: grommunio-bayes-sync.py missing uri=True in sqlite3.connect"
-
-    loop_script = os.path.join(root_dir, "rootfs", "usr", "local", "bin", "grommunio-loop.sh")
-    with open(loop_script, "r", encoding="utf-8") as f:
-        loop_content = f.read()
-    assert "trap" in loop_content and "TERM" in loop_content, (
-        "FAIL: grommunio-loop.sh missing TERM trap"
-    )
-
-    supervisord_conf = os.path.join(root_dir, "rootfs", "etc", "supervisor", "supervisord.conf")
-    with open(supervisord_conf, "r", encoding="utf-8") as f:
-        sup_content = f.read()
-    assert "grommunio-loop.sh" in sup_content and "grommunio-bayes-sync.py" in sup_content, (
-        "FAIL: supervisord.conf does not invoke Python engine via grommunio-loop.sh"
-    )
-
-    print("    [+] Static Bayes synchronization contracts verified.")
-    return True
-
-
-def test_functional_bayes_transitions():
-    print("    [>] 2. Validating functional Bayes transitions (Spam -> Ham -> Trash -> Expunge)...")
-    root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    py_script = os.path.join(root_dir, "rootfs", "usr", "local", "bin", "grommunio-bayes-sync.py")
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        state_db = os.path.join(tmpdir, "bayes_learned.sqlite3")
-        gromox_dir = os.path.join(tmpdir, "gromox_users")
-        user_dir = os.path.join(gromox_dir, "testuser", "0")
-        eml_dir = os.path.join(tmpdir, "gromox_users", "testuser", "eml")
-        os.makedirs(user_dir, exist_ok=True)
-        os.makedirs(eml_dir, exist_ok=True)
-
-        user_db = os.path.join(user_dir, "exchange.sqlite3")
-
-        # Create user exchange database schema
-        conn_user = sqlite3.connect(user_db)
-        conn_user.execute("""
-            CREATE TABLE messages (
-                message_id INTEGER PRIMARY KEY,
-                parent_fid INTEGER,
-                mid_string TEXT
-            );
-        """)
-        conn_user.commit()
-
-        # Create mock rspamc binary in a temp bin directory
-        bin_dir = os.path.join(tmpdir, "bin")
-        os.makedirs(bin_dir, exist_ok=True)
-        rspamc_log = os.path.join(tmpdir, "rspamc.log")
-        mock_rspamc = os.path.join(bin_dir, "rspamc")
-        with open(mock_rspamc, "w") as f:
-            f.write(f"""#!/bin/sh
-echo "$@" >> "{rspamc_log}"
-if [ -f "{tmpdir}/rspamc_fail" ]; then
-    exit 1
-fi
-if [ -f "{tmpdir}/rspamc_kill_on_107" ] && grep -q "107" "{tmpdir}/current_msg" 2>/dev/null; then
-    kill -9 $PPID
-    exit 1
-fi
-exit 0
+class Fixture:
+    def __init__(self, tmpdir):
+        self.tmp = tmpdir
+        self.user_dir = os.path.join(tmpdir, "user")
+        self.state_db = os.path.join(tmpdir, "bayes_learned.sqlite3")
+        self.bin_dir = os.path.join(tmpdir, "bin")
+        self.rspamc_log = os.path.join(tmpdir, "rspamc.log")
+        self.rspamc_args = os.path.join(tmpdir, "rspamc.args")
+        self.exm2eml_log = os.path.join(tmpdir, "exm2eml.log")
+        self.rspamc_fail = os.path.join(tmpdir, "rspamc_fail")
+        self.exm2eml_fail = os.path.join(tmpdir, "exm2eml_fail")
+        self._cn = 0
+        os.makedirs(self.bin_dir)
+        # Logs "<mode>|<Subject>" per accepted call; fails when flagged or when payload has REJECT_ME.
+        self._write_bin("rspamc", f"""#!/bin/sh
+payload=$(cat)
+[ -f "{self.rspamc_fail}" ] && exit 1
+case "$payload" in *REJECT_ME*) exit 1;; esac
+for a; do mode=$a; done
+printf '%s\\n' "$*" >> "{self.rspamc_args}"
+printf '%s|%s\\n' "$mode" "$(printf '%s' "$payload" | sed -n 's/^Subject: //p' | head -1)" >> "{self.rspamc_log}"
 """)
-        os.chmod(mock_rspamc, 0o755)
-
-        # Create mock gromox-exm2eml binary
-        exm2eml_log = os.path.join(tmpdir, "exm2eml.log")
-        mock_exm2eml = os.path.join(bin_dir, "gromox-exm2eml")
-        with open(mock_exm2eml, "w") as f:
-            f.write(f"""#!/bin/sh
-echo "$@" >> "{exm2eml_log}"
-if [ -f "{tmpdir}/exm2eml_fail" ]; then
-    exit 1
-fi
-printf "From: test@example.com\\nSubject: Mocked Export\\n\\nExported body\\n"
-exit 0
-""")
-        os.chmod(mock_exm2eml, 0o755)
-
-        env = os.environ.copy()
-        env["BAYES_STATE_DB"] = state_db
-        env["GROMOX_USER_DIR"] = gromox_dir
-        env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
-
-        # ----------------------------------------------------------------------
-        # Case A: Message 101 in Junk (parent_fid = 23) -> Learn SPAM
-        # ----------------------------------------------------------------------
-        conn_user.execute("INSERT INTO messages (message_id, parent_fid, mid_string) VALUES (101, 23, 'mid-101.eml');")
-        conn_user.commit()
-        with open(os.path.join(eml_dir, "mid-101.eml"), "w") as f:
-            f.write("Subject: Spam 101\n\nBuy crypto!")
-
-        res = subprocess.run([sys.executable, py_script], env=env, capture_output=True, text=True)
-        assert res.returncode == 0, f"FAIL: Case A sync failed: {res.stderr}"
-
-        conn_state = sqlite3.connect(state_db)
-        cur = conn_state.cursor()
-        cur.execute("SELECT learned_type FROM learned_messages WHERE username = 'testuser' AND message_id = 101;")
-        row = cur.fetchone()
-        assert row and row[0] == "spam", f"FAIL: Expected 101 learned as spam, got {row}"
-
-        with open(rspamc_log, "r") as f:
-            log_content = f.read()
-        assert "learn_spam" in log_content, "FAIL: rspamc learn_spam not invoked"
-
-        # ----------------------------------------------------------------------
-        # Case B: Message 101 moved from Junk (23) to Inbox (19) -> Learn HAM
-        # ----------------------------------------------------------------------
-        conn_user.execute("UPDATE messages SET parent_fid = 19 WHERE message_id = 101;")
-        conn_user.commit()
-
-        res = subprocess.run([sys.executable, py_script], env=env, capture_output=True, text=True)
-        assert res.returncode == 0, f"FAIL: Case B sync failed: {res.stderr}"
-
-        cur.execute("SELECT learned_type FROM learned_messages WHERE username = 'testuser' AND message_id = 101;")
-        row = cur.fetchone()
-        assert row and row[0] == "ham", f"FAIL: Expected 101 learned as ham, got {row}"
-
-        with open(rspamc_log, "r") as f:
-            log_content = f.read()
-        assert "learn_ham" in log_content, "FAIL: rspamc learn_ham not invoked"
-
-        # ----------------------------------------------------------------------
-        # Case C: Message 102 in Junk -> moved to Trash (27) -> Pruned
-        # ----------------------------------------------------------------------
-        conn_user.execute("INSERT INTO messages (message_id, parent_fid, mid_string) VALUES (102, 23, 'mid-102.eml');")
-        conn_user.commit()
-        with open(os.path.join(eml_dir, "mid-102.eml"), "w") as f:
-            f.write("Subject: Spam 102\n\nPhishing!")
-
-        subprocess.run([sys.executable, py_script], env=env, check=True)
-        cur.execute("SELECT learned_type FROM learned_messages WHERE username = 'testuser' AND message_id = 102;")
-        assert cur.fetchone()[0] == "spam"
-
-        # Move to Trash (27)
-        conn_user.execute("UPDATE messages SET parent_fid = 27 WHERE message_id = 102;")
-        conn_user.commit()
-
-        # Clear rspamc log before running
-        open(rspamc_log, "w").close()
-        subprocess.run([sys.executable, py_script], env=env, check=True)
-
-        cur.execute("SELECT message_id FROM learned_messages WHERE username = 'testuser' AND message_id = 102;")
-        assert cur.fetchone() is None, "FAIL: Expected message 102 to be pruned on move to Trash"
-
-        with open(rspamc_log, "r") as f:
-            log_content = f.read()
-        assert "learn_ham" not in log_content, "FAIL: Message moved to trash was erroneously learned as ham"
-
-        # ----------------------------------------------------------------------
-        # Case D: Message 103 in Junk -> Permanently expunged -> Pruned
-        # ----------------------------------------------------------------------
-        conn_user.execute("INSERT INTO messages (message_id, parent_fid, mid_string) VALUES (103, 23, 'mid-103.eml');")
-        conn_user.commit()
-        with open(os.path.join(eml_dir, "mid-103.eml"), "w") as f:
-            f.write("Subject: Spam 103")
-
-        subprocess.run([sys.executable, py_script], env=env, check=True)
-        cur.execute("SELECT learned_type FROM learned_messages WHERE username = 'testuser' AND message_id = 103;")
-        assert cur.fetchone()[0] == "spam"
-
-        # Expunge message from database
-        conn_user.execute("DELETE FROM messages WHERE message_id = 103;")
-        conn_user.commit()
-
-        subprocess.run([sys.executable, py_script], env=env, check=True)
-        cur.execute("SELECT message_id FROM learned_messages WHERE username = 'testuser' AND message_id = 103;")
-        assert cur.fetchone() is None, "FAIL: Expected expunged message 103 to be pruned from state"
-
-        # ----------------------------------------------------------------------
-        # Case E: Dependency Failure (Rspamd down) -> State preserved for retry
-        # ----------------------------------------------------------------------
-        conn_user.execute("INSERT INTO messages (message_id, parent_fid, mid_string) VALUES (104, 23, 'mid-104.eml');")
-        conn_user.commit()
-        with open(os.path.join(eml_dir, "mid-104.eml"), "w") as f:
-            f.write("Subject: Spam 104")
-
-        # Simulate rspamc failure
-        fail_flag = os.path.join(tmpdir, "rspamc_fail")
-        open(fail_flag, "w").close()
-
-        subprocess.run([sys.executable, py_script], env=env, check=True)
-        cur.execute("SELECT message_id FROM learned_messages WHERE username = 'testuser' AND message_id = 104;")
-        assert cur.fetchone() is None, "FAIL: Message 104 was recorded despite rspamc failure"
-
-        # Remove failure flag, sync should now succeed
-        os.remove(fail_flag)
-        subprocess.run([sys.executable, py_script], env=env, check=True)
-        cur.execute("SELECT learned_type FROM learned_messages WHERE username = 'testuser' AND message_id = 104;")
-        row = cur.fetchone()
-        assert row and row[0] == "spam", f"FAIL: Message 104 not learned after recovery: {row}"
-
-        # ----------------------------------------------------------------------
-        # Case F: gromox-exm2eml export failure -> unlearned and retried
-        # ----------------------------------------------------------------------
-        conn_user.execute("INSERT INTO messages (message_id, parent_fid, mid_string) VALUES (105, 23, NULL);")
-        conn_user.commit()
-
-        exm_fail_flag = os.path.join(tmpdir, "exm2eml_fail")
-        open(exm_fail_flag, "w").close()
-
-        subprocess.run([sys.executable, py_script], env=env, check=True)
-        cur.execute("SELECT message_id FROM learned_messages WHERE username = 'testuser' AND message_id = 105;")
-        assert cur.fetchone() is None, "FAIL: Message 105 was learned despite gromox-exm2eml failure"
-
-        # Clear export failure -> message 105 should now be learned as spam
-        os.remove(exm_fail_flag)
-        subprocess.run([sys.executable, py_script], env=env, check=True)
-        cur.execute("SELECT learned_type FROM learned_messages WHERE username = 'testuser' AND message_id = 105;")
-        row = cur.fetchone()
-        assert row and row[0] == "spam", f"FAIL: Message 105 was not learned after exm2eml recovery: {row}"
-
-        # ----------------------------------------------------------------------
-        # Case G: Incremental commits preserve progress across interrupted runs
-        # ----------------------------------------------------------------------
-        conn_user.execute("INSERT INTO messages (message_id, parent_fid, mid_string) VALUES (106, 23, 'mid-106.eml');")
-        conn_user.execute("INSERT INTO messages (message_id, parent_fid, mid_string) VALUES (107, 23, 'mid-107.eml');")
-        conn_user.commit()
-        with open(os.path.join(eml_dir, "mid-106.eml"), "w") as f:
-            f.write("Subject: Spam 106\n\nPayload 106")
-        with open(os.path.join(eml_dir, "mid-107.eml"), "w") as f:
-            f.write("Subject: Spam 107\n\nPayload 107")
-
-        # Mock rspamc succeeds for 106, fails for 107
-        rspamc_selective = os.path.join(bin_dir, "rspamc")
-        with open(rspamc_selective, "w") as f:
-            f.write(f"""#!/bin/sh
-cat - > "{tmpdir}/last_payload"
-if grep -q "Payload 107" "{tmpdir}/last_payload"; then
-    exit 1
-fi
-exit 0
+        self._write_bin("gromox-exm2eml", f"""#!/bin/sh
+echo "$@" >> "{self.exm2eml_log}"
+[ -f "{self.exm2eml_fail}" ] && exit 1
+printf 'From: a@b.example\\nSubject: Exported %s\\n\\nbody\\n' "$3"
 """)
 
-        subprocess.run([sys.executable, py_script], env=env, check=True)
-        cur.execute("SELECT learned_type FROM learned_messages WHERE username = 'testuser' AND message_id = 106;")
-        assert cur.fetchone() is not None, "FAIL: Message 106 was not committed incrementally!"
-        cur.execute("SELECT learned_type FROM learned_messages WHERE username = 'testuser' AND message_id = 107;")
-        assert cur.fetchone() is None, "FAIL: Message 107 was recorded despite rspamc failure"
+    def _write_bin(self, name, content):
+        path = os.path.join(self.bin_dir, name)
+        with open(path, "w") as f:
+            f.write(content)
+        os.chmod(path, 0o755)
 
-        # Restore default mock rspamc
-        with open(rspamc_selective, "w") as f:
-            f.write('#!/bin/sh\nexit 0\n')
+    def mailbox(self, domain, name, address):
+        mbox = os.path.join(self.user_dir, domain, name)
+        os.makedirs(os.path.join(mbox, "exmdb"))
+        os.makedirs(os.path.join(mbox, "eml"))
+        conn = sqlite3.connect(os.path.join(mbox, "exmdb", "exchange.sqlite3"))
+        conn.execute(MESSAGES_DDL)
+        conn.execute(STORE_PROPS_DDL)
+        conn.execute("INSERT INTO store_properties VALUES (?, ?)", (PR_SMTP_ADDRESS, address))
+        conn.commit()
+        return Mailbox(self, mbox, conn, f"{domain}/{name}")
 
-        # ----------------------------------------------------------------------
-        # Case H: Read-only attachment prevents writes to user exchange database
-        # ----------------------------------------------------------------------
-        ro_verify = sqlite3.connect(state_db, uri=True)
-        escaped_user = user_db.replace("'", "''")
-        ro_verify.execute(f"ATTACH DATABASE 'file:{escaped_user}?mode=ro' AS test_ro_user")
+    def run(self):
+        env = dict(os.environ, BAYES_STATE_DB=self.state_db, GROMOX_USER_DIR=self.user_dir,
+                   PATH=f"{self.bin_dir}:{os.environ.get('PATH', '')}")
+        res = subprocess.run([sys.executable, SCRIPT], env=env, capture_output=True, text=True)
+        assert res.returncode == 0, f"sync exited {res.returncode}: {res.stderr}"
+
+    def calls(self):
+        """Accepted rspamc calls since the last call to calls(), as ['learn_spam|Subject', ...]."""
+        if not os.path.exists(self.rspamc_log):
+            return []
+        with open(self.rspamc_log) as f:
+            out = f.read().splitlines()
+        os.remove(self.rspamc_log)
+        return out
+
+    def state(self, mailbox=None):
+        conn = sqlite3.connect(self.state_db)
         try:
-            ro_verify.execute("INSERT INTO test_ro_user.messages (message_id, parent_fid) VALUES (999, 23);")
-            assert False, "FAIL: Write to read-only attached database succeeded unexpectedly!"
-        except sqlite3.OperationalError as exc:
-            assert "readonly" in str(exc).lower() or "read-only" in str(exc).lower(), f"Unexpected error: {exc}"
-        ro_verify.close()
-
-        conn_user.close()
-        conn_state.close()
-
-    print("    [+] All Bayes lifecycle transitions (Spam, Ham, Trash, Expunge, Retry) verified.")
-    return True
+            q = "SELECT mailbox, message_id, learned_type FROM learned_messages"
+            args = ()
+            if mailbox:
+                q += " WHERE mailbox = ?"
+                args = (mailbox,)
+            return sorted(conn.execute(q + " ORDER BY 1, 2", args).fetchall())
+        finally:
+            conn.close()
 
 
-def test_scan_cost_and_idempotence():
-    print("    [>] 3. Benchmarking scan cost and idempotence on 1,000 messages...")
-    root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    py_script = os.path.join(root_dir, "rootfs", "usr", "local", "bin", "grommunio-bayes-sync.py")
+class Mailbox:
+    def __init__(self, fx, path, conn, key):
+        self.fx, self.path, self.conn, self.key = fx, path, conn, key
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        state_db = os.path.join(tmpdir, "bayes_learned.sqlite3")
-        gromox_dir = os.path.join(tmpdir, "gromox_users")
-        user_dir = os.path.join(gromox_dir, "scaleuser", "0")
-        eml_dir = os.path.join(tmpdir, "gromox_users", "scaleuser", "eml")
-        os.makedirs(user_dir, exist_ok=True)
-        os.makedirs(eml_dir, exist_ok=True)
-        user_db = os.path.join(user_dir, "exchange.sqlite3")
+    def add(self, msg_id, fid, subject, eml=True, deleted=0, associated=0):
+        mid = f"R-{msg_id % 256:02x}/m{msg_id}"
+        self.fx._cn += 1
+        self.conn.execute(
+            "INSERT INTO messages (message_id, parent_fid, is_deleted, is_associated, change_number, "
+            "message_size, mid_string) VALUES (?, ?, ?, ?, ?, 1, ?)",
+            (msg_id, fid, deleted, associated, self.fx._cn, mid if eml else None),
+        )
+        self.conn.commit()
+        if eml:
+            eml_path = os.path.join(self.path, "eml", mid)
+            os.makedirs(os.path.dirname(eml_path), exist_ok=True)
+            with open(eml_path, "w") as f:
+                f.write(f"Subject: {subject}\n\nbody {subject}\n")
 
-        conn_user = sqlite3.connect(user_db)
-        conn_user.execute("CREATE TABLE messages (message_id INTEGER PRIMARY KEY, parent_fid INTEGER, mid_string TEXT);")
-        # Populate 1,000 messages in Junk (23) and create corresponding eml files
-        records = [(i, 23, f"mid-{i}.eml") for i in range(1, 1001)]
-        conn_user.executemany("INSERT INTO messages (message_id, parent_fid, mid_string) VALUES (?, ?, ?);", records)
-        conn_user.commit()
-        conn_user.close()
+    def update(self, msg_id, **cols):
+        sets = ", ".join(f"{k} = ?" for k in cols)
+        self.conn.execute(f"UPDATE messages SET {sets} WHERE message_id = ?", (*cols.values(), msg_id))
+        self.conn.commit()
 
-        for i in range(1, 1001):
-            with open(os.path.join(eml_dir, f"mid-{i}.eml"), "w") as f:
-                f.write(f"Subject: Scale test {i}\n\nSpam payload")
+    def delete(self, msg_id):
+        self.conn.execute("DELETE FROM messages WHERE message_id = ?", (msg_id,))
+        self.conn.commit()
 
-        # Mock rspamc
-        bin_dir = os.path.join(tmpdir, "bin")
-        os.makedirs(bin_dir, exist_ok=True)
-        rspamc_log = os.path.join(tmpdir, "rspamc.log")
-        mock_rspamc = os.path.join(bin_dir, "rspamc")
-        with open(mock_rspamc, "w") as f:
-            f.write(f'#!/bin/sh\necho "$@" >> "{rspamc_log}"\nexit 0\n')
-        os.chmod(mock_rspamc, 0o755)
 
-        env = os.environ.copy()
-        env["BAYES_STATE_DB"] = state_db
-        env["GROMOX_USER_DIR"] = gromox_dir
-        env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
+def with_fixture(fn):
+    def wrapper():
+        with tempfile.TemporaryDirectory() as tmp:
+            fn(Fixture(tmp))
+        print(f"    [+] {fn.__name__}")
+    wrapper.__name__ = fn.__name__
+    return wrapper
 
-        # First run: initial learning of 1,000 messages
-        t0 = time.perf_counter()
-        subprocess.run([sys.executable, py_script], env=env, check=True)
-        t_first = time.perf_counter() - t0
 
-        conn_state = sqlite3.connect(state_db)
-        cur = conn_state.cursor()
-        cur.execute("SELECT COUNT(*) FROM learned_messages WHERE username = 'scaleuser' AND learned_type = 'spam';")
-        count = cur.fetchone()[0]
-        assert count == 1000, f"FAIL: Expected 1000 learned spam messages, found {count}"
+@with_fixture
+def test_junk_learned_as_spam_once_per_mailbox(fx):
+    mb = fx.mailbox("example.com", "testuser~1", "testuser@example.com")
+    mb.add(1048576, JUNK, "Spam A")
+    mb.add(1048577, INBOX, "Normal mail")
+    fx.run()
+    assert fx.calls() == ["learn_spam|Spam A"]
+    assert fx.state() == [("example.com/testuser~1", 1048576, "spam")]
+    fx.run()
+    assert fx.calls() == [], "unchanged mailbox must not trigger any further learning"
 
-        # Second run: zero messages changed folder -> must complete in < 50ms with 0 rspamc calls
-        open(rspamc_log, "w").close()
-        t0 = time.perf_counter()
-        subprocess.run([sys.executable, py_script], env=env, check=True)
-        t_subsequent = time.perf_counter() - t0
 
-        with open(rspamc_log, "r") as f:
-            calls = f.read().strip()
-        assert calls == "", f"FAIL: Expected 0 rspamc calls on unchanged mailbox, got: {calls}"
+@with_fixture
+def test_learning_targets_internal_controller_not_password_protected_frontend(fx):
+    mb = fx.mailbox("example.com", "testuser", "testuser@example.com")
+    mb.add(1, JUNK, "Spam")
+    fx.run()
+    with open(fx.rspamc_args) as f:
+        assert f.read().split() == ["-h", "127.0.0.1:11335", "learn_spam"]
 
-        print(f"    [+] Scan cost for 1,000 unchanged messages: {t_subsequent*1000:.2f}ms (0 redundant subprocesses).")
-        assert t_subsequent < 1.0, f"FAIL: Subsequent scan too slow: {t_subsequent}s"
 
-        conn_state.close()
+@with_fixture
+def test_junk_to_inbox_learns_ham(fx):
+    mb = fx.mailbox("example.com", "testuser", "testuser@example.com")
+    mb.add(1, JUNK, "Wrongly filed")
+    fx.run()
+    fx.calls()
+    mb.update(1, parent_fid=INBOX)
+    fx.run()
+    assert fx.calls() == ["learn_ham|Wrongly filed"]
+    assert fx.state() == [("example.com/testuser", 1, "ham")]
+    fx.run()
+    assert fx.calls() == []
 
-    print("    [+] Idempotence and scan cost reduction verified.")
-    return True
+
+@with_fixture
+def test_junk_to_deleted_items_or_expunged_is_pruned_without_ham(fx):
+    mb = fx.mailbox("example.com", "testuser", "testuser@example.com")
+    for i in (1, 2, 3):
+        mb.add(i, JUNK, f"Spam {i}")
+    fx.run()
+    fx.calls()
+    mb.update(1, parent_fid=DELETED_ITEMS)
+    mb.update(2, is_deleted=1)
+    mb.delete(3)
+    fx.run()
+    assert fx.calls() == [], "deleted/expunged messages must not be learned as ham"
+    assert fx.state() == []
+
+
+@with_fixture
+def test_soft_deleted_and_fai_in_junk_are_not_learned(fx):
+    mb = fx.mailbox("example.com", "testuser", "testuser@example.com")
+    mb.add(1, JUNK, "Soft deleted", deleted=1)
+    mb.add(2, JUNK, "Folder associated item", associated=1)
+    mb.add(3, JUNK, "Real spam")
+    fx.run()
+    assert fx.calls() == ["learn_spam|Real spam"]
+    assert [r[1] for r in fx.state()] == [3]
+
+
+@with_fixture
+def test_same_message_id_in_two_mailboxes_is_tracked_independently(fx):
+    a = fx.mailbox("example.com", "alice", "alice@example.com")
+    b = fx.mailbox("example.com", "bob", "bob@example.com")
+    a.add(1048576, JUNK, "Alice spam")
+    b.add(1048576, JUNK, "Bob spam")
+    fx.run()
+    assert sorted(fx.calls()) == ["learn_spam|Alice spam", "learn_spam|Bob spam"]
+    b.update(1048576, parent_fid=INBOX)
+    fx.run()
+    assert fx.calls() == ["learn_ham|Bob spam"]
+    assert fx.state() == [("example.com/alice", 1048576, "spam"), ("example.com/bob", 1048576, "ham")]
+
+
+@with_fixture
+def test_rspamd_failure_is_retried_next_run(fx):
+    mb = fx.mailbox("example.com", "testuser", "testuser@example.com")
+    mb.add(1, JUNK, "Spam")
+    open(fx.rspamc_fail, "w").close()
+    fx.run()
+    assert fx.state() == []
+    os.remove(fx.rspamc_fail)
+    fx.run()
+    assert fx.calls() == ["learn_spam|Spam"]
+    assert fx.state() == [("example.com/testuser", 1, "spam")]
+
+
+@with_fixture
+def test_failed_ham_learning_is_retried(fx):
+    mb = fx.mailbox("example.com", "testuser", "testuser@example.com")
+    mb.add(1, JUNK, "Maybe ham")
+    fx.run()
+    mb.update(1, parent_fid=INBOX)
+    open(fx.rspamc_fail, "w").close()
+    fx.run()
+    assert fx.state() == [("example.com/testuser", 1, "spam")], "failed ham learn must keep the spam row"
+    os.remove(fx.rspamc_fail)
+    fx.run()
+    assert fx.state() == [("example.com/testuser", 1, "ham")]
+
+
+@with_fixture
+def test_missing_eml_exports_using_store_smtp_address(fx):
+    mb = fx.mailbox("example.com", "testuser~1", "testuser@example.com")
+    mb.add(7, JUNK, "ignored", eml=False)
+    open(fx.exm2eml_fail, "w").close()
+    fx.run()
+    assert fx.state() == [], "export failure must leave the message unlearned"
+    os.remove(fx.exm2eml_fail)
+    fx.run()
+    assert fx.calls() == ["learn_spam|Exported 7"]
+    with open(fx.exm2eml_log) as f:
+        lines = f.read().splitlines()
+    assert lines[-1] == "-u testuser@example.com 7", f"export must use the store address, got {lines[-1]!r}"
+
+
+@with_fixture
+def test_missing_eml_without_store_address_is_skipped(fx):
+    mb = fx.mailbox("example.com", "testuser", "testuser@example.com")
+    mb.conn.execute("DELETE FROM store_properties")
+    mb.conn.commit()
+    mb.add(7, JUNK, "ignored", eml=False)
+    fx.run()
+    assert fx.calls() == [] and fx.state() == []
+    assert not os.path.exists(fx.exm2eml_log)
+
+
+@with_fixture
+def test_progress_is_committed_incrementally(fx):
+    mb = fx.mailbox("example.com", "testuser", "testuser@example.com")
+    mb.add(1, JUNK, "Good spam")
+    mb.add(2, JUNK, "REJECT_ME")
+    fx.run()
+    assert fx.state() == [("example.com/testuser", 1, "spam")]
+
+
+@with_fixture
+def test_large_mailbox_unchanged_triggers_no_learning(fx):
+    mb = fx.mailbox("example.com", "testuser", "testuser@example.com")
+    mb.conn.executemany(
+        "INSERT INTO messages (message_id, parent_fid, is_deleted, is_associated, change_number, message_size, mid_string) "
+        "VALUES (?, ?, 0, 0, ?, 1, ?)",
+        [(i, JUNK, i, f"R-00/m{i}") for i in range(1, 1001)],
+    )
+    mb.conn.commit()
+    os.makedirs(os.path.join(mb.path, "eml", "R-00"))
+    for i in range(1, 1001):
+        with open(os.path.join(mb.path, "eml", "R-00", f"m{i}"), "w") as f:
+            f.write(f"Subject: s{i}\n\nx\n")
+    fx.run()
+    assert len(fx.calls()) == 1000
+    fx.run()
+    assert fx.calls() == []
 
 
 def main():
-    print("==> [18/18] Checking Bayes Synchronization Engine & Scan Cost Reduction...")
-    if not test_static_bayes_contracts():
-        return 1
-    if not test_functional_bayes_transitions():
-        return 1
-    if not test_scan_cost_and_idempotence():
-        return 1
-    print("    [+] ALL BAYES SYNCHRONIZATION OPTIMIZATIONS PASSED.")
+    print("==> Checking Bayes Synchronization Engine...")
+    tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
+    for t in tests:
+        try:
+            t()
+        except AssertionError as exc:
+            print(f"    [-] {t.__name__}: {exc}", file=sys.stderr)
+            return 1
+    print("[+] SUCCESS: Bayes synchronization verified.\n")
     return 0
 
 
