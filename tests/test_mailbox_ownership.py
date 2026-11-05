@@ -43,11 +43,8 @@ def test_static_ownership_contracts():
                 f"FAIL: Found unconditional recursive chown: {trimmed}"
             )
 
-    assert "chown gromox:gromox /var/lib/gromox" in content, (
-        "FAIL: entrypoint.sh missing top-level chown gromox:gromox /var/lib/gromox"
-    )
-    assert "for dir in /var/lib/gromox/*" in content, (
-        "FAIL: entrypoint.sh missing shallow directory loop for /var/lib/gromox subdirectories"
+    assert "grommunio-fix-permissions.sh" in content, (
+        "FAIL: entrypoint.sh does not delegate to grommunio-fix-permissions.sh"
     )
     assert "GROMOX_FIX_PERMISSIONS" in content, (
         "FAIL: entrypoint.sh missing GROMOX_FIX_PERMISSIONS opt-in repair check"
@@ -60,6 +57,12 @@ def test_static_ownership_contracts():
         rep_content = f.read()
     assert "chown -R gromox:gromox /var/lib/gromox" in rep_content, (
         "FAIL: grommunio-fix-permissions.sh missing recursive chown on /var/lib/gromox"
+    )
+    assert "shallow" in rep_content, (
+        "FAIL: grommunio-fix-permissions.sh missing shallow mode"
+    )
+    assert "find /var/lib/gromox -mindepth 1 -maxdepth 1" in rep_content, (
+        "FAIL: grommunio-fix-permissions.sh missing find -maxdepth 1 shallow traversal"
     )
 
     print("    [+] Static ownership contracts and repair script verified.")
@@ -161,18 +164,28 @@ echo "$visited"
 
 
 def test_repair_script_execution():
-    print("    [>] 4. Validating on-demand repair utility in container...")
-    res = subprocess.run(
-        ["docker", "exec", "-i", "grommunio", "/usr/local/bin/grommunio-fix-permissions.sh"],
+    print("    [>] 4. Validating on-demand repair utility in container (shallow and recursive)...")
+    res_shallow = subprocess.run(
+        ["docker", "exec", "-i", "grommunio", "/usr/local/bin/grommunio-fix-permissions.sh", "shallow"],
         capture_output=True,
         text=True,
         timeout=60,
     )
-    if res.returncode != 0 or "Permissions repair completed successfully" not in res.stdout:
-        print(f"    [-] Repair utility execution failed:\n{res.stderr or res.stdout}", file=sys.stderr)
+    if res_shallow.returncode != 0 or "Permissions repair (shallow) completed successfully" not in res_shallow.stdout:
+        print(f"    [-] Repair utility shallow execution failed:\n{res_shallow.stderr or res_shallow.stdout}", file=sys.stderr)
         return False
 
-    print("    [+] /usr/local/bin/grommunio-fix-permissions.sh executed successfully.")
+    res_rec = subprocess.run(
+        ["docker", "exec", "-i", "grommunio", "/usr/local/bin/grommunio-fix-permissions.sh", "recursive"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if res_rec.returncode != 0 or "Permissions repair (recursive) completed successfully" not in res_rec.stdout:
+        print(f"    [-] Repair utility recursive execution failed:\n{res_rec.stderr or res_rec.stdout}", file=sys.stderr)
+        return False
+
+    print("    [+] /usr/local/bin/grommunio-fix-permissions.sh executed successfully in both shallow and recursive modes.")
     return True
 
 

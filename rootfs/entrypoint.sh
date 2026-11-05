@@ -272,48 +272,11 @@ trap - EXIT INT TERM
 
 # 10. Set permissions across volumes and runtime paths
 echo "==> Applying file ownership and permissions..."
-
-# Apply constant-time O(1) top-level ownership on /var/lib/gromox without traversing mailbox data
-chown gromox:gromox /var/lib/gromox 2>/dev/null || true
-chmod 0770 /var/lib/gromox 2>/dev/null || true
-for dir in /var/lib/gromox/*; do
-    [ -d "${dir}" ] || continue
-    if [ "${dir}" = "/var/lib/gromox/queue" ]; then
-        chown -R gromox:gromox /var/lib/gromox/queue 2>/dev/null || true
-    else
-        chown gromox:gromox "${dir}" 2>/dev/null || true
-    fi
-done
-
-# Optional one-time recursive permissions fix (opt-in via GROMOX_FIX_PERMISSIONS=true)
 if [ "${GROMOX_FIX_PERMISSIONS:-false}" = "true" ]; then
-    echo "==> GROMOX_FIX_PERMISSIONS=true: Performing one-time recursive ownership fix on /var/lib/gromox..."
-    chown -R gromox:gromox /var/lib/gromox 2>/dev/null || true
+    /usr/local/bin/grommunio-fix-permissions.sh recursive
+else
+    /usr/local/bin/grommunio-fix-permissions.sh shallow
 fi
-
-chown -R gromox:gromox /run/gromox /var/log/gromox 2>/dev/null || true
-chmod 0755 /run/gromox 2>/dev/null || true
-chown -R grommunio:gromoxcf /etc/gromox 2>/dev/null || true
-chmod 0775 /etc/gromox 2>/dev/null || true
-chmod 0660 /etc/gromox/* 2>/dev/null || true
-
-chown -R redis:redis /var/lib/redis /run/redis /var/log/redis 2>/dev/null || true
-chown -R _rspamd:_rspamd /var/lib/rspamd /run/rspamd /var/log/rspamd 2>/dev/null || true
-chown -R grommunio:grommunio /var/lib/grommunio-admin-common /var/lib/grommunio-admin-api /etc/grommunio-admin-api /run/grommunio-admin-api 2>/dev/null || true
-chown -R Debian-exim:Debian-exim /var/spool/exim4 /var/log/exim4 2>/dev/null || true
-chown root:root /etc/exim4/exim4.conf 2>/dev/null || true
-chmod 0644 /etc/exim4/exim4.conf 2>/dev/null || true
-chmod 0750 /var/spool/exim4 2>/dev/null || true
-chmod 0755 /var/log/exim4 2>/dev/null || true
-chmod 0644 /var/log/exim4/* 2>/dev/null || true
-chmod 0644 /var/log/php*.log 2>/dev/null || true
-chown grommunio:grommunio /var/log/grommunio-admin-api.log 2>/dev/null || true
-chmod 0644 /var/log/grommunio-admin-api.log 2>/dev/null || true
-chmod 0775 /var/log/gromox 2>/dev/null || true
-chmod 0644 /var/log/gromox/*.log 2>/dev/null || true
-chmod 0644 /etc/logrotate.d/* 2>/dev/null || true
-chown -R www-data:www-data /var/lib/nginx /var/log/nginx /var/log/grommunio-sync /var/lib/grommunio-sync /var/lib/grommunio-web /run/php /var/lib/php/sessions 2>/dev/null || true
-chmod 0770 /var/lib/grommunio-web/session /var/lib/grommunio-web/tmp /var/lib/php/sessions 2>/dev/null || true
 
 # 8. Trigger background mailbox creation defaults initialization
 if [ -x /usr/local/bin/grommunio-init-defaults.py ] || [ -f /usr/local/bin/grommunio-init-defaults.py ]; then
