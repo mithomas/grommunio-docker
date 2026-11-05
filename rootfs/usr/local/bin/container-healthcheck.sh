@@ -16,18 +16,22 @@ if [ -n "$NOT_RUNNING" ]; then
 fi
 
 # 2. Check HTTP probes on fixed internal listeners (Webmail :8080, Admin API :8081, Rspamd :11334)
-if ! curl -fs -o /dev/null --max-time 3 "http://127.0.0.1:8080/"; then
-    echo "HEALTHCHECK FAILED: Webmail probe on port 8080 failed" >&2
+INTERNAL_HTTP_PORT=8080
+INTERNAL_ADMIN_PORT=8081
+INTERNAL_RSPAMD_PORT=11334
+
+if ! curl -fs -o /dev/null --max-time 3 "http://127.0.0.1:${INTERNAL_HTTP_PORT}/"; then
+    echo "HEALTHCHECK FAILED: Webmail probe on port ${INTERNAL_HTTP_PORT} failed" >&2
     exit 1
 fi
 
-if ! curl -fs -o /dev/null --max-time 3 "http://127.0.0.1:8081/api/v1/status"; then
-    echo "HEALTHCHECK FAILED: Admin API status probe on port 8081 failed" >&2
+if ! curl -fs -o /dev/null --max-time 3 "http://127.0.0.1:${INTERNAL_ADMIN_PORT}/api/v1/status"; then
+    echo "HEALTHCHECK FAILED: Admin API status probe on port ${INTERNAL_ADMIN_PORT} failed" >&2
     exit 1
 fi
 
-if ! curl -fs -o /dev/null --max-time 3 "http://127.0.0.1:11334/"; then
-    echo "HEALTHCHECK FAILED: Rspamd probe on port 11334 failed" >&2
+if ! curl -fs -o /dev/null --max-time 3 "http://127.0.0.1:${INTERNAL_RSPAMD_PORT}/"; then
+    echo "HEALTHCHECK FAILED: Rspamd probe on port ${INTERNAL_RSPAMD_PORT} failed" >&2
     exit 1
 fi
 

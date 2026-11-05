@@ -136,6 +136,7 @@ jobs:
           cp -f .env.example .env
           cp -f .env.secrets.example .env.secrets
           echo "IMAGE_NAME=grommunio-ci:local" >> .env
+          echo "ENFORCE_SECURE_PASSWORDS=false" >> .env
 
       - name: Start services with docker compose
         run: |

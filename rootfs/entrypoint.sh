@@ -64,6 +64,22 @@ elif [ "${DB_HOST}" = "mariadb" ] && [ "${DB_PORT}" != "3306" ]; then
     export DB_PORT="3306"
 fi
 
+# Check for insecure default credentials
+INSECURE_WARNINGS=""
+[ "${ADMIN_PASSWORD}" = "admin" ] && INSECURE_WARNINGS="${INSECURE_WARNINGS} ADMIN_PASSWORD (admin)"
+[ "${DB_PASSWORD}" = "grommunio_secret" ] && INSECURE_WARNINGS="${INSECURE_WARNINGS} DB_PASSWORD (grommunio_secret)"
+[ "${RSPAMD_PASSWORD}" = "rspamd_secret" ] && INSECURE_WARNINGS="${INSECURE_WARNINGS} RSPAMD_PASSWORD (rspamd_secret)"
+[ "${LDAP_BIND_PASS}" = "ldap_secret" ] && INSECURE_WARNINGS="${INSECURE_WARNINGS} LDAP_BIND_PASS (ldap_secret)"
+
+if [ -n "${INSECURE_WARNINGS}" ]; then
+    echo "WARNING: Default credentials detected in environment:${INSECURE_WARNINGS}." >&2
+    echo "         Please configure custom passwords in production!" >&2
+    if [ "${ENFORCE_SECURE_PASSWORDS:-true}" = "true" ]; then
+        echo "ERROR: Refusing to start with default credentials. Set ENFORCE_SECURE_PASSWORDS=false to permit insecure defaults for development/testing." >&2
+        exit 1
+    fi
+fi
+
 # 2. Setup tmpfs directories
 mkdir -p /run/gromox /run/php /run/redis /run/rspamd /run/supervisor /run/grommunio-admin-api /run/nginx /run/mysqld
 if [ -n "${DB_SOCKET}" ] && [ "$(realpath -m "${DB_SOCKET}")" != "$(realpath -m /run/mysqld/mysqld.sock)" ]; then
@@ -268,7 +284,7 @@ else
 fi
 
 # 11. Trigger background mailbox creation defaults initialization
-if [ -x /usr/local/bin/grommunio-init-defaults.py ] || [ -f /usr/local/bin/grommunio-init-defaults.py ]; then
+if [ -f /usr/local/bin/grommunio-init-defaults.py ]; then
     python3 /usr/local/bin/grommunio-init-defaults.py &
 fi
 

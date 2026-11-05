@@ -216,6 +216,64 @@ echo "SHOULD_NOT_REACH"
     return True
 
 
+def test_default_credential_warnings_and_hardening():
+    print("    [>] 6. Validating default password detection and ENFORCE_SECURE_PASSWORDS...")
+    root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    entrypoint_path = os.path.join(root_dir, "rootfs", "entrypoint.sh")
+    with open(entrypoint_path, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    assert "INSECURE_WARNINGS" in content, "FAIL: entrypoint.sh missing INSECURE_WARNINGS check"
+    assert "ENFORCE_SECURE_PASSWORDS" in content, "FAIL: entrypoint.sh missing ENFORCE_SECURE_PASSWORDS check"
+    assert "[ -f /usr/local/bin/grommunio-init-defaults.py ]" in content, "FAIL: entrypoint.sh missing simplified init-defaults test"
+    assert "[ -x /usr/local/bin/grommunio-init-defaults.py ]" not in content, "FAIL: entrypoint.sh still contains redundant -x check"
+
+    # Test A: Unset ENFORCE_SECURE_PASSWORDS defaults to true and fails on default credentials
+    snippet_default_enforce = '''
+ADMIN_PASSWORD="admin"
+DB_PASSWORD="grommunio_secret"
+RSPAMD_PASSWORD="rspamd_secret"
+LDAP_BIND_PASS="ldap_secret"
+unset ENFORCE_SECURE_PASSWORDS
+
+INSECURE_WARNINGS=""
+[ "${ADMIN_PASSWORD}" = "admin" ] && INSECURE_WARNINGS="${INSECURE_WARNINGS} ADMIN_PASSWORD (admin)"
+[ "${DB_PASSWORD}" = "grommunio_secret" ] && INSECURE_WARNINGS="${INSECURE_WARNINGS} DB_PASSWORD (grommunio_secret)"
+[ "${RSPAMD_PASSWORD}" = "rspamd_secret" ] && INSECURE_WARNINGS="${INSECURE_WARNINGS} RSPAMD_PASSWORD (rspamd_secret)"
+[ "${LDAP_BIND_PASS}" = "ldap_secret" ] && INSECURE_WARNINGS="${INSECURE_WARNINGS} LDAP_BIND_PASS (ldap_secret)"
+
+if [ -n "${INSECURE_WARNINGS}" ]; then
+    echo "WARNING: Default credentials detected in environment:${INSECURE_WARNINGS}." >&2
+    if [ "${ENFORCE_SECURE_PASSWORDS:-true}" = "true" ]; then
+        exit 1
+    fi
+fi
+exit 0
+'''
+    res_def_enf = subprocess.run(["bash", "-c", snippet_default_enforce], capture_output=True, text=True)
+    assert res_def_enf.returncode == 1, f"Expected 1 when defaulting to true, got {res_def_enf.returncode}"
+    assert "WARNING: Default credentials detected" in res_def_enf.stderr
+
+    # Test B: Explicit ENFORCE_SECURE_PASSWORDS=false permits default credentials with warning
+    snippet_opt_out = snippet_default_enforce.replace('unset ENFORCE_SECURE_PASSWORDS', 'ENFORCE_SECURE_PASSWORDS="false"')
+    res_opt_out = subprocess.run(["bash", "-c", snippet_opt_out], capture_output=True, text=True)
+    assert res_opt_out.returncode == 0, f"Expected 0 when opted out, got {res_opt_out.returncode}"
+    assert "WARNING: Default credentials detected" in res_opt_out.stderr
+    assert "ADMIN_PASSWORD (admin)" in res_opt_out.stderr
+
+    # Test C: Custom passwords pass cleanly under default ENFORCE_SECURE_PASSWORDS=true
+    snippet_custom = snippet_default_enforce.replace('ADMIN_PASSWORD="admin"', 'ADMIN_PASSWORD="custom_admin"') \
+                                            .replace('DB_PASSWORD="grommunio_secret"', 'DB_PASSWORD="custom_db"') \
+                                            .replace('RSPAMD_PASSWORD="rspamd_secret"', 'RSPAMD_PASSWORD="custom_rspamd"') \
+                                            .replace('LDAP_BIND_PASS="ldap_secret"', 'LDAP_BIND_PASS="custom_ldap"')
+    res_cust = subprocess.run(["bash", "-c", snippet_custom], capture_output=True, text=True)
+    assert res_cust.returncode == 0, f"Expected 0, got {res_cust.returncode}"
+    assert res_cust.stderr == "", f"Expected empty stderr, got: {res_cust.stderr}"
+
+    print("    [+] Default password detection, stderr warnings, and ENFORCE_SECURE_PASSWORDS verified.")
+    return True
+
+
 def check_password_escaping():
     print("==> Checking Password Special Characters & Direct Controller Connection...")
     if not test_env_parsing():
@@ -227,6 +285,8 @@ def check_password_escaping():
     if not test_container_configuration():
         return False
     if not test_rspamd_hash_failure_handling():
+        return False
+    if not test_default_credential_warnings_and_hardening():
         return False
     return True
 
