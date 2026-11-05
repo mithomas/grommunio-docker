@@ -304,12 +304,12 @@ cleanup_db_lock() {
     fi
     rm -f "${DB_LOCK_ERR_FILE:-}"
 }
-trap cleanup_db_lock EXIT
-trap "exit 143" INT TERM
-
 coproc DB_LOCK_COPROC {
+    trap - EXIT INT TERM
     exec sleep 100
 }
+trap cleanup_db_lock EXIT
+trap "exit 143" INT TERM
 
 echo "PID:$$"
 echo "COPROC_PID:$DB_LOCK_COPROC_PID"
@@ -379,12 +379,12 @@ cleanup_db_lock() {
     fi
     rm -f "${DB_LOCK_ERR_FILE:-}"
 }
-trap cleanup_db_lock EXIT
-trap "exit 143" INT TERM
-
 coproc DB_LOCK_COPROC {
+    trap - EXIT INT TERM
     exec sleep 100
 }
+trap cleanup_db_lock EXIT
+trap "exit 143" INT TERM
 
 cleanup_db_lock
 trap - EXIT INT TERM

@@ -35,7 +35,8 @@ def parse_quota(val):
     (storagequotalimit, prohibitsendquota, prohibitreceivequota).
     Supports flexible human units (e.g. '10G', '10GB', '500M', '500MB', '1048576KB')
     as well as plain integers.
-    Returns 0 for unlimited / disabled.
+    Returns 0 for unlimited / disabled ('0', 'unlimited', 'none', 'off', 'false').
+    Raises ValueError for unknown units or unparsable values.
     """
     if val is None:
         return 0
@@ -45,13 +46,16 @@ def parse_quota(val):
 
     m = re.match(r"^([0-9]+(?:\.[0-9]+)?)\s*([a-z]*)$", s)
     if not m:
-        try:
-            return int(float(s))
-        except ValueError:
-            return 0
+        raise ValueError(f"Invalid quota specification: '{val}'")
 
     num_str, unit = m.groups()
-    num = float(num_str)
+    try:
+        num = float(num_str)
+    except ValueError:
+        raise ValueError(f"Invalid numeric value in quota: '{val}'")
+
+    if num < 0:
+        raise ValueError(f"Quota value cannot be negative: '{val}'")
 
     if unit in ("g", "gb", "gib"):
         return int(num * 1024 * 1024)
@@ -62,7 +66,7 @@ def parse_quota(val):
     elif unit in ("t", "tb", "tib"):
         return int(num * 1024 * 1024 * 1024)
     else:
-        return int(num)
+        raise ValueError(f"Unknown quota unit '{unit}' in '{val}'. Supported units: B, KiB/KB, MiB/MB, GiB/GB, TiB/TB")
 
 
 def main():
@@ -79,11 +83,15 @@ def main():
     priv_archive = str2bool(os.environ.get("DEFAULT_USER_PRIV_ARCHIVE", "false"), False)
     chat_user = str2bool(os.environ.get("DEFAULT_USER_CREATE_CHAT_USER", "false"), False)
 
-    storage_quota = parse_quota(os.environ.get("DEFAULT_USER_STORAGE_QUOTA", "0"))
-    send_quota = parse_quota(os.environ.get("DEFAULT_USER_SEND_QUOTA", "0"))
-    receive_quota = parse_quota(os.environ.get("DEFAULT_USER_RECEIVE_QUOTA", "0"))
+    try:
+        storage_quota = parse_quota(os.environ.get("DEFAULT_USER_STORAGE_QUOTA", "0"))
+        send_quota = parse_quota(os.environ.get("DEFAULT_USER_SEND_QUOTA", "0"))
+        receive_quota = parse_quota(os.environ.get("DEFAULT_USER_RECEIVE_QUOTA", "0"))
+    except ValueError as exc:
+        print(f"[init-defaults] ERROR: {exc}", file=sys.stderr)
+        return 1
 
-    admin_pw = os.environ.get("ADMIN_PASSWORD", "admin_secret")
+    admin_pw = os.environ.get("ADMIN_PASSWORD", "admin")
     # Admin API listens on fixed internal port 8081 in the container namespace
     api_base = "http://127.0.0.1:8081/api/v1"
 
@@ -109,7 +117,8 @@ def main():
                 if token and csrf:
                     break
         except Exception:
-            time.sleep(2)
+            pass
+        time.sleep(2)
 
     if not token or not csrf:
         print("[init-defaults] Could not authenticate to Admin API within timeout. Exiting.", file=sys.stderr)

@@ -189,12 +189,12 @@ cleanup_db_lock() {
     fi
     rm -f "${DB_LOCK_ERR_FILE:-}"
 }
-trap cleanup_db_lock EXIT
-trap 'exit 143' INT TERM
-
 coproc DB_LOCK_COPROC {
+    trap - EXIT INT TERM
     MYSQL_PWD="${DB_PASSWORD}" mariadb "${MARIADB_CONN[@]}" -u "${DB_USER}" "${DB_NAME}" --unbuffered -sN 2>"${DB_LOCK_ERR_FILE}"
 }
+trap cleanup_db_lock EXIT
+trap 'exit 143' INT TERM
 
 echo "SELECT GET_LOCK('grommunio_schema_lock', 120);" >&"${DB_LOCK_COPROC[1]}"
 LOCK_RESULT=""
