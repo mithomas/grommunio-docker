@@ -178,7 +178,7 @@ jobs:
           echo "Awaiting OpenLDAP readiness..."
           ldap_timeout=60
           while [ $ldap_timeout -gt 0 ]; do
-            if docker compose --profile test exec -T openldap ldapsearch -x -H ldap://localhost:389 -b dc=example,dc=com >/dev/null 2>&1; then
+            if docker compose --profile test exec -T openldap ldapsearch -x -H ldap://localhost:389 -b "" -s base namingContexts >/dev/null 2>&1; then
               echo "OpenLDAP is ready and serving queries!"
               break
             fi
