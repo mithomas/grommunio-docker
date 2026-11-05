@@ -36,9 +36,6 @@ def test_static_entrypoint_contracts():
     assert "GET_LOCK('grommunio_schema_lock'" in content, (
         "FAIL: entrypoint.sh missing GET_LOCK('grommunio_schema_lock' advisory locking"
     )
-    assert "RELEASE_LOCK('grommunio_schema_lock'" in content, (
-        "FAIL: entrypoint.sh missing RELEASE_LOCK('grommunio_schema_lock'"
-    )
     assert "cleanup_db_lock" in content and "trap cleanup_db_lock" in content, (
         "FAIL: entrypoint.sh missing cleanup_db_lock trap"
     )
@@ -50,6 +47,12 @@ def test_static_entrypoint_contracts():
     )
     assert "trap - EXIT INT TERM" in content, (
         "FAIL: entrypoint.sh missing 'trap - EXIT INT TERM' to disarm trap"
+    )
+    assert "db()" in content, (
+        "FAIL: entrypoint.sh missing db() helper function"
+    )
+    assert "table_schema = DATABASE()" in content, (
+        "FAIL: entrypoint.sh missing table_schema = DATABASE() query"
     )
 
     # 2. Assert no silent table count fallback

@@ -152,41 +152,40 @@ else
     MARIADB_CONN=(-h "${DB_HOST}" -P "${DB_PORT}")
 fi
 
+db() {
+    MYSQL_PWD="${DB_PASSWORD}" mariadb "${MARIADB_CONN[@]}" -u "${DB_USER}" "${DB_NAME}" "$@"
+}
+
 DB_ERR=""
 while true; do
-    if DB_ERR=$(MYSQL_PWD="${DB_PASSWORD}" mariadb "${MARIADB_CONN[@]}" -u "${DB_USER}" "${DB_NAME}" -e "SELECT 1;" 2>&1 >/dev/null); then
+    if DB_ERR=$(db -e "SELECT 1;" 2>&1 >/dev/null); then
         break
     fi
     COUNT=$((COUNT + 1))
     if [ ${COUNT} -ge ${MAX_RETRIES} ]; then
-        echo "ERROR: Database connection failed after ${MAX_RETRIES} retries."
-        echo "Last error: ${DB_ERR}"
+        echo "ERROR: Database connection failed after ${MAX_RETRIES} retries." >&2
+        echo "Last error: ${DB_ERR}" >&2
         exit 1
     fi
-    echo "Waiting for MariaDB... (${COUNT}/${MAX_RETRIES}): ${DB_ERR}"
+    echo "Waiting for MariaDB... (${COUNT}/${MAX_RETRIES}): ${DB_ERR}" >&2
     sleep 2
 done
 echo "==> Database reachable and responsive."
 
 # 5. Acquire advisory lock to prevent schema initialization / migration races across replicas
 echo "==> Acquiring MariaDB schema migration advisory lock..."
-DB_LOCK_ERR_FILE=$(mktemp)
 cleanup_db_lock() {
     if [ -n "${DB_LOCK_COPROC_PID:-}" ] && kill -0 "${DB_LOCK_COPROC_PID}" 2>/dev/null; then
         echo "==> Releasing MariaDB schema advisory lock..."
-        echo "SELECT RELEASE_LOCK('grommunio_schema_lock');" >&"${DB_LOCK_COPROC[1]}" 2>/dev/null || true
-        echo "QUIT;" >&"${DB_LOCK_COPROC[1]}" 2>/dev/null || true
         exec {DB_LOCK_COPROC[1]}>&- 2>/dev/null || true
         exec {DB_LOCK_COPROC[0]}<&- 2>/dev/null || true
-        kill "${DB_LOCK_COPROC_PID}" 2>/dev/null || true
         wait "${DB_LOCK_COPROC_PID}" 2>/dev/null || true
         unset DB_LOCK_COPROC_PID
     fi
-    rm -f "${DB_LOCK_ERR_FILE:-}"
 }
 coproc DB_LOCK_COPROC {
     trap - EXIT INT TERM
-    MYSQL_PWD="${DB_PASSWORD}" mariadb "${MARIADB_CONN[@]}" -u "${DB_USER}" "${DB_NAME}" --unbuffered -sN 2>"${DB_LOCK_ERR_FILE}"
+    db --unbuffered -sN
 }
 trap cleanup_db_lock EXIT
 trap 'exit 143' INT TERM
@@ -195,36 +194,21 @@ echo "SELECT GET_LOCK('grommunio_schema_lock', 120);" >&"${DB_LOCK_COPROC[1]}"
 LOCK_RESULT=""
 if ! read -r -t 125 -u "${DB_LOCK_COPROC[0]}" LOCK_RESULT; then
     echo "ERROR: Timed out waiting for MariaDB schema advisory lock response." >&2
-    if [ -s "${DB_LOCK_ERR_FILE}" ]; then
-        echo "MariaDB error: $(cat "${DB_LOCK_ERR_FILE}")" >&2
-    fi
     exit 1
 fi
 
 if [ "${LOCK_RESULT}" != "1" ]; then
     echo "ERROR: Failed to acquire MariaDB schema lock 'grommunio_schema_lock' (result: ${LOCK_RESULT:-empty})." >&2
-    if [ -s "${DB_LOCK_ERR_FILE}" ]; then
-        echo "MariaDB error: $(cat "${DB_LOCK_ERR_FILE}")" >&2
-    fi
     exit 1
 fi
 echo "==> Acquired schema advisory lock."
 
 # 6. Check database table count strictly within DB_NAME
 echo "==> Checking database table count for '${DB_NAME}'..."
-TABLE_ERR_FILE=$(mktemp)
-TABLE_COUNT_RAW=""
-if ! TABLE_COUNT_RAW=$(MYSQL_PWD="${DB_PASSWORD}" mariadb "${MARIADB_CONN[@]}" -u "${DB_USER}" "${DB_NAME}" -sN -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = '${DB_NAME}';" 2>"${TABLE_ERR_FILE}"); then
-    echo "ERROR: Failed to query table count from database '${DB_NAME}'." >&2
-    echo "MariaDB error: $(cat "${TABLE_ERR_FILE}")" >&2
-    rm -f "${TABLE_ERR_FILE}"
-    exit 1
-fi
-rm -f "${TABLE_ERR_FILE}"
-
+TABLE_COUNT_RAW=$(db -sN -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE();" 2>&1 || true)
 TABLE_COUNT=$(echo "${TABLE_COUNT_RAW}" | tr -d '[:space:]')
 if ! [[ "${TABLE_COUNT}" =~ ^[0-9]+$ ]]; then
-    echo "ERROR: Invalid table count returned for database '${DB_NAME}': '${TABLE_COUNT_RAW}'" >&2
+    echo "ERROR: Failed to query table count from database '${DB_NAME}': '${TABLE_COUNT_RAW}'" >&2
     exit 1
 fi
 
