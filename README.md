@@ -405,7 +405,7 @@ Two GitHub Actions workflows automate container builds, integration testing, and
 ### Quality Gate (Integration Testing)
 Before any image is pushed to Docker Hub:
 - Docker Buildx builds the image for `linux/amd64` and starts the test stack (`docker compose --profile test up -d`).
-- Container health is verified via `/usr/local/bin/container-healthcheck.sh` and all 19 verification tests (`python3 tests/run_all.py`) run in CI.
+- Container health is verified via `/usr/local/bin/container-healthcheck.sh` and all verification tests (`python3 tests/run_all.py`) run in CI.
 - Publication to Docker Hub only proceeds if 100% of tests pass.
 
 ### Image Tagging Convention

@@ -134,9 +134,7 @@ jobs:
       - name: Prepare test environment
         run: |
           cp -f .env.example .env
-          cp -f .env.secrets.example .env.secrets
           echo "IMAGE_NAME=grommunio-ci:local" >> .env
-          echo "ENFORCE_SECURE_PASSWORDS=false" >> .env
           # Test with decoupled non-default host ports to verify port mapping decoupling
           echo "HTTP_PORT=18080" >> .env
           echo "ADMIN_PORT=18081" >> .env
@@ -144,6 +142,13 @@ jobs:
           echo "SMTP_PORT=12525" >> .env
           echo "DB_PORT=13306" >> .env
           echo "LDAP_PORT=10389" >> .env
+          # Populate secure non-default secrets with special characters (item 3) so Docker Compose quoting is exercised
+          printf "%s='%s'\n" \
+            DB_ROOT_PASSWORD 'p@$$w0rd\'\''#\";-n\4' \
+            DB_PASSWORD 'p@$$w0rd\'\''#\";-n\4' \
+            ADMIN_PASSWORD 'p@$$w0rd\'\''#\";-n\4' \
+            RSPAMD_PASSWORD 'p@$$w0rd\'\''#\";-n\4' \
+            LDAP_BIND_PASS 'p@$$w0rd\'\''#\";-n\4' > .env.secrets
 
       - name: Start services with docker compose
         run: |
