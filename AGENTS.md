@@ -34,6 +34,7 @@ All functional verification checks performed during development are codified as 
 | **`tests/test_password_escaping.py`** | Special-Character Passwords End-to-End | Validates that complex passwords ($ # ' " \ ; -n) survive the entire path through the entrypoint to MariaDB, Gromox, Admin API, and Rspamd (throwaway containers). |
 | **`tests/test_db_init_safety.py`** | Database Schema & Migration Idempotence | Validates the live database is populated and `gromox-dbop -U` re-runs cleanly. |
 | **`tests/test_startup_safety.py`** | Container Startup Safety | Runs the real image in throwaway containers against a scratch database: default credentials are refused, an unreachable database exits with a diagnostic, SIGTERM during the schema-lock wait exits 143, and a restart reuses the existing schema. |
+| **`tests/test_restart_persistence.py`** | Container Restart Data & Volume Persistence | Validates schema re-creation bypass, user/domain preservation, and mailbox message persistence across container lifecycles with persistent volumes (throwaway containers). |
 | **`tests/test_log_retention.py`** | Log Rotation & Admin UI Tail Continuity | Validates the Admin UI `FileReader` (format parsing, continuation-line timestamps, `after` filter, `.1` rotated-log fallback) and the in-container logrotate dry run. |
 | **`tests/test_mailbox_ownership.py`** | Mailbox Volume Permissions & Repair | Validates gromox:gromox ownership of the mailbox volume and that `grommunio-fix-permissions.sh` repairs a root-owned tree (shallow touches only the top level, recursive fixes everything). |
 | **`tests/test_bayes_sync.py`** | Bayes Synchronization Engine & Scan Cost Reduction | Validates Python batched sync engine with SQLite ATTACH DATABASE, set-based differential queries, spam/ham/trash/expunge lifecycle transitions, retry resilience, and zero redundant process forks. |
@@ -65,6 +66,7 @@ python3 tests/test_multidomain_delivery.py
 python3 tests/test_password_escaping.py
 python3 tests/test_db_init_safety.py
 python3 tests/test_startup_safety.py
+python3 tests/test_restart_persistence.py
 python3 tests/test_log_retention.py
 python3 tests/test_mailbox_ownership.py
 python3 tests/test_bayes_sync.py

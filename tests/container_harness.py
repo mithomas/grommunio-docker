@@ -167,7 +167,8 @@ class Container:
                "--security-opt", "no-new-privileges:true"]
         for mount in TMPFS:
             cmd += ["--tmpfs", mount]
-        for volume in PERSISTENT + self.volumes:
+        mounted_dests = {v.split(":")[1] if ":" in v else v for v in self.volumes}
+        for volume in [p for p in PERSISTENT if p not in mounted_dests] + self.volumes:
             cmd += ["-v", volume]
         for key, value in self.env.items():
             cmd += ["-e", f"{key}={value}"]

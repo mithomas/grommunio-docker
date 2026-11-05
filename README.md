@@ -377,6 +377,7 @@ A standalone test suite validating all container services, endpoints, credential
 | **`tests/test_password_escaping.py`** | Validates special-character passwords ($ # ' " \ ; -n) end-to-end across MariaDB, Gromox, Admin API, and Rspamd (throwaway containers). |
 | **`tests/test_db_init_safety.py`** | Validates the live schema is populated and `gromox-dbop -U` re-runs cleanly. |
 | **`tests/test_startup_safety.py`** | Validates default-credential refusal, DB failure diagnostics, SIGTERM during the schema lock (exit 143), and idempotent restart (throwaway containers). |
+| **`tests/test_restart_persistence.py`** | Validates schema re-creation bypass, user/domain preservation, and mailbox message persistence across container lifecycles (throwaway containers). |
 | **`tests/test_log_retention.py`** | Validates the Admin UI log reader (formats, `after` filter, rotated-log fallback) and the logrotate dry run. |
 | **`tests/test_mailbox_ownership.py`** | Validates gromox ownership of the mailbox volume and the repair script. |
 | **`tests/test_bayes_sync.py`** | Validates batched Bayes sync engine, spam/ham/trash transitions, and scan cost. |
