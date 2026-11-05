@@ -67,9 +67,12 @@ def check_ldap_integration():
         return False
     print("    [+] Short UID 'testuser' confirmed registered in altnames.")
 
-    # Step 7: Ensure mailbox store permissions are owned by gromox daemon
-    run_compose_cmd(["chown", "-R", "gromox:gromox", "/var/lib/gromox/user"])
-    print("    [+] Mailbox store permissions verified.")
+    # Step 7: Mailbox store must be owned by the gromox daemon user
+    res = run_compose_cmd(["find", "/var/lib/gromox/user/example.com", "-maxdepth", "2", "!", "-user", "gromox"])
+    if res.returncode != 0 or res.stdout.strip():
+        print(f"    [-] Mailbox paths not owned by gromox:\n{res.stdout or res.stderr}", file=sys.stderr)
+        return False
+    print("    [+] Mailbox store owned by gromox.")
 
     return True
 

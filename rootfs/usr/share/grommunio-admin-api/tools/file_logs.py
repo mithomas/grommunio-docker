@@ -156,17 +156,22 @@ class FileReader:
                 rot_mtime = datetime.fromtimestamp(os.path.getmtime(rotated_path))
                 with open(rotated_path, "r", encoding="utf-8", errors="replace") as f_rot:
                     rot_lines = f_rot.readlines()
+                prev_dt = rot_mtime
                 for line in rot_lines[-needed:]:
-                    entry = self._parse_entry(line, rot_mtime)
+                    entry = self._parse_entry(line, prev_dt)
                     if entry:
                         rot_entries.append(entry)
+                        prev_dt = entry[1]
             except Exception as exc:
                 logger.debug("Could not read rotated log %s: %s", rotated_path, exc)
 
+        # Continuation lines without a timestamp belong to the preceding entry, not to the file's mtime.
+        prev_dt = mtime
         for line in lines:
-            entry = self._parse_entry(line, mtime)
+            entry = self._parse_entry(line, prev_dt)
             if entry:
                 entries.append(entry)
+                prev_dt = entry[1]
 
         all_entries = rot_entries + entries
 

@@ -1,148 +1,77 @@
 #!/usr/bin/env python3
 """
-Verification Test 10: Admin UI Monitoring Logs (Exim & Service Log Readers)
-Validates the log monitoring endpoints used by the Admin UI Monitoring (/logs) tab:
-1. Authenticates to grommunio-admin-api with ADMIN_PASSWORD to obtain JWT cookie.
-2. Queries /api/v1/system/logs and confirms:
-   - 'Exim' is present in the log files list.
-   - 'Postfix' is NOT present in the log files list.
-   - Core services ('Antispam', 'Gromox http', 'Gromox delivery', 'Admin API', etc.) are exposed.
-3. Injects a test email into Exim (port 2525) and verifies that /api/v1/system/logs/Exim
-   returns populated log entries matching OpenAPI precTime schema.
-4. Verifies query parameters ('n', 'after') on /api/v1/system/logs/Exim.
-5. Verifies that active daemons return valid log structures without 500/404 errors.
+Verification Test: Admin UI Monitoring Logs (Exim & Service Log Readers)
+1. /system/logs lists Exim (not Postfix) and the core daemons.
+2. A message injected into Exim shows up in /system/logs/Exim with schema-conformant entries.
+3. The 'after' filter returns only newer entries, strictly fewer than the unfiltered tail.
+4. Every core daemon log target answers without error.
 """
-import json
-import os
 import re
-import smtplib
 import sys
-import time
-import urllib.error
 import urllib.parse
-import urllib.request
-from email.mime.text import MIMEText
+
+from env_helper import admin_session, api, ensure_testuser, send_mail, wait_until
 
 PRECTIME_REGEX = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{1,6}$")
+CORE_TARGETS = ["Antispam", "Gromox http", "Gromox delivery", "Admin API", "Nginx"]
 
-from env_helper import admin_session, ensure_testuser, get_admin_port, get_bind_ip, get_smtp_port
+
+def entries(session, target, query=""):
+    status, body = api("GET", f"/system/logs/{urllib.parse.quote(target)}{query}", session=session)
+    return status, (body or {}).get("data", [])
 
 
 def check_monitoring_logs():
-    admin_port = get_admin_port()
-    smtp_port = get_smtp_port()
-    bind_ip = get_bind_ip()
     print("==> Checking Admin UI Monitoring Logs (Exim & Service Log Monitoring)...")
-    ensure_testuser()
-
-    # Step 1: Authenticate to Admin API
+    rcpt = ensure_testuser()
     try:
-        token = admin_session().token
+        session = admin_session()
     except RuntimeError as exc:
         print(f"    [-] {exc}", file=sys.stderr)
         return False
-    print(f"    [+] Logged in to Admin API (token: {token[:16]}...).")
 
-    auth_headers = {"Cookie": f"grommunioAuthJwt={token}"}
-
-    # Step 2: Query /api/v1/system/logs
-    logs_url = f"http://localhost:{admin_port}/api/v1/system/logs"
-    try:
-        req = urllib.request.Request(logs_url, headers=auth_headers)
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode("utf-8")).get("data", [])
-            print(f"    [+] Available log files ({len(data)}): {data}")
-    except Exception as exc:
-        print(f"    [-] Failed to retrieve /system/logs: {exc}", file=sys.stderr)
+    status, body = api("GET", "/system/logs", session=session)
+    targets = (body or {}).get("data", [])
+    if status != 200 or "Exim" not in targets or "Postfix" in targets:
+        print(f"    [-] Unexpected log targets (HTTP {status}): {targets}", file=sys.stderr)
         return False
-
-    if "Exim" not in data:
-        print("    [-] 'Exim' log target is missing from available logs.", file=sys.stderr)
+    missing = [t for t in CORE_TARGETS if t not in targets]
+    if missing:
+        print(f"    [-] Core log targets missing: {missing}", file=sys.stderr)
         return False
-    print("    [+] Confirmed 'Exim' log target is present.")
+    print(f"    [+] Log targets include Exim and core daemons (no Postfix): {targets}")
 
-    if "Postfix" in data:
-        print("    [-] 'Postfix' is still present in available logs (expected Exim only).", file=sys.stderr)
+    subject = send_mail(rcpt, "LogCheck")
+    if not wait_until(lambda: any(subject in e.get("message", "") for e in entries(session, "Exim", "?n=100")[1]), 20):
+        print(f"    [-] Injected message '{subject}' never appeared in the Exim log.", file=sys.stderr)
         return False
-    print("    [+] Confirmed 'Postfix' is absent from available logs.")
+    print("    [+] Injected message recorded in the Exim log.")
 
-    # Step 3: Inject test email into Exim to generate log activity
-    test_subj = f"Log Verification Test {int(time.time())}"
-    msg = MIMEText("Testing Exim log monitoring integration.")
-    msg["Subject"] = test_subj
-    msg["From"] = "logcheck@external.example"
-    msg["To"] = "testuser@example.com"
-
-    try:
-        with smtplib.SMTP(bind_ip, smtp_port, timeout=10) as smtp:
-            smtp.sendmail("logcheck@external.example", ["testuser@example.com"], msg.as_string())
-        print(f"    [+] Sent test email via Exim port {smtp_port} ('{test_subj}').")
-    except Exception as exc:
-        print(f"    [-] SMTP injection failed: {exc}", file=sys.stderr)
+    status, exim = entries(session, "Exim", "?n=50")
+    if status != 200 or not exim:
+        print(f"    [-] Exim log tail returned HTTP {status} with {len(exim)} entries.", file=sys.stderr)
         return False
-
-    time.sleep(1)
-
-    # Step 4: Query Exim log endpoint
-    exim_url = f"http://localhost:{admin_port}/api/v1/system/logs/Exim?n=20"
-    try:
-        req = urllib.request.Request(exim_url, headers=auth_headers)
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            exim_entries = json.loads(resp.read().decode("utf-8")).get("data", [])
-            print(f"    [+] Exim log entries retrieved ({len(exim_entries)} items).")
-    except Exception as exc:
-        print(f"    [-] Failed to retrieve /system/logs/Exim: {exc}", file=sys.stderr)
-        return False
-
-    if not exim_entries:
-        print("    [-] Exim log entries are unexpectedly empty.", file=sys.stderr)
-        return False
-
-    # Validate structure and precTime format on Exim entries
-    for entry in exim_entries:
-        if not isinstance(entry.get("level"), int):
-            print(f"    [-] Invalid entry level in Exim log: {entry}", file=sys.stderr)
+    for entry in exim:
+        if not isinstance(entry.get("level"), int) or not isinstance(entry.get("message"), str) \
+                or not PRECTIME_REGEX.match(entry.get("time", "")):
+            print(f"    [-] Entry does not match the log schema: {entry}", file=sys.stderr)
             return False
-        if not isinstance(entry.get("message"), str):
-            print(f"    [-] Invalid entry message in Exim log: {entry}", file=sys.stderr)
-            return False
-        time_str = entry.get("time", "")
-        if not PRECTIME_REGEX.match(time_str):
-            print(f"    [-] Timestamp '{time_str}' does not match precTime schema.", file=sys.stderr)
-            return False
+    print(f"    [+] {len(exim)} Exim entries conform to the log schema.")
 
-    # Verify injected mail appears in Exim log
-    found_mail = any(test_subj in e.get("message", "") or "logcheck@external.example" in e.get("message", "") for e in exim_entries)
-    if found_mail:
-        print("    [+] Confirmed injected mail recorded in Exim log output.")
-    else:
-        print("    [+] Exim log active and formatted (injected message logged).")
-
-    # Step 5: Test 'after' filtering
-    first_time = exim_entries[0]["time"]
-    after_url = f"http://localhost:{admin_port}/api/v1/system/logs/Exim?after={urllib.parse.quote(first_time)}"
-    try:
-        req = urllib.request.Request(after_url, headers=auth_headers)
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            filtered = json.loads(resp.read().decode("utf-8")).get("data", [])
-            print(f"    [+] 'after' filter test returned {len(filtered)} items (original {len(exim_entries)}).")
-    except Exception as exc:
-        print(f"    [-] 'after' query failed: {exc}", file=sys.stderr)
+    pivot = exim[-3]["time"]
+    status, newer = entries(session, "Exim", f"?n=50&after={urllib.parse.quote(pivot)}")
+    if status != 200 or any(e["time"] <= pivot for e in newer) or len(newer) >= len(exim):
+        print(f"    [-] 'after' filter returned {len(newer)} of {len(exim)} entries, "
+              f"some not newer than {pivot} (HTTP {status}).", file=sys.stderr)
         return False
+    print(f"    [+] 'after' filter returned {len(newer)} entries, all newer than the pivot.")
 
-    # Step 6: Verify other key daemons
-    daemons_to_check = ["Antispam", "Gromox http", "Gromox delivery", "Admin API", "Nginx"]
-    for daemon in daemons_to_check:
-        url = f"http://localhost:{admin_port}/api/v1/system/logs/{urllib.parse.quote(daemon)}?n=5"
-        try:
-            req = urllib.request.Request(url, headers=auth_headers)
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                d_entries = json.loads(resp.read().decode("utf-8")).get("data", [])
-                print(f"    [+] Log target '{daemon}': HTTP 200 ({len(d_entries)} entries).")
-        except Exception as exc:
-            print(f"    [-] Log target '{daemon}' returned error: {exc}", file=sys.stderr)
+    for target in CORE_TARGETS:
+        status, items = entries(session, target, "?n=5")
+        if status != 200:
+            print(f"    [-] Log target '{target}' returned HTTP {status}.", file=sys.stderr)
             return False
-
+    print("    [+] All core log targets answer with HTTP 200.")
     return True
 
 
@@ -150,6 +79,5 @@ if __name__ == "__main__":
     if check_monitoring_logs():
         print("[+] SUCCESS: Admin UI monitoring logs fully verified.\n")
         sys.exit(0)
-    else:
-        print("[-] FAILED: Monitoring logs verification failed.\n", file=sys.stderr)
-        sys.exit(1)
+    print("[-] FAILED: Monitoring logs verification failed.\n", file=sys.stderr)
+    sys.exit(1)

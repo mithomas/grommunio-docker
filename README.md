@@ -360,19 +360,19 @@ A standalone test suite validating all container services, endpoints, credential
 | :--- | :--- |
 | **`tests/test_endpoints.py`** | Validates HTTP status codes and MIME types across `:8080`, `:8081`, and `:11334`. |
 | **`tests/test_webmail_security.py`** | Validates root Webmail delivery, secure cookies, static assets, and logon/Origin handling. |
-| **`tests/test_admin_auth.py`** | Verifies Admin API authentication, JWT issuance, and protected endpoints. |
+| **`tests/test_admin_auth.py`** | Verifies Admin API authentication, JWT issuance, protected endpoints, and rejection of missing or forged tokens. |
 | **`tests/test_rspamd_auth.py`** | Verifies password protection on dedicated Rspamd dashboard (`:11334`). |
 | **`tests/test_mail_pipeline.py`** | End-to-end SMTP injection (`:2525`) -> Rspamd (`:11333`) -> LMTP (`:24`) -> Spam History. |
 | **`tests/test_live_status.py`** | Validates Admin UI Live Status (`:8081`), VTS telemetry, and hop-by-hop sanitization. |
 | **`tests/test_monitoring_logs.py`** | Validates Admin UI Monitoring logs (`:8081`), file readers, and Exim log replacement. |
 | **`tests/test_defaults.py`** | Validates Admin UI mailbox creation defaults (`:8081`), language, protocols, and quotas. |
-| **`tests/test_ldap_config.py`** | Validates default group mapping in `/system/mconf/ldap` and disk persistence. |
+| **`tests/test_ldap_config.py`** | Validates default group mappings and that LDAP config changes persist to disk. |
 | **`tests/test_ldap.py`** | Validates companion OpenLDAP (`:389`), directory search, and user mailbox downsync. |
 | **`tests/test_db_socket.py`** | Validates `DB_SOCKET` Unix socket handling and DB-free Exim domain routing. |
 | **`tests/test_password_escaping.py`** | Validates passwords with special characters ($, #, ', ", \, ;) in Rspamd hashing and default-credential gating. |
 | **`tests/test_db_init_safety.py`** | Validates the live schema is populated and `gromox-dbop -U` re-runs cleanly. |
-| **`tests/test_log_retention.py`** | Validates the logrotate dry run and the Admin UI `.1` rotated-log fallback. |
-| **`tests/test_mailbox_ownership.py`** | Validates `/var/lib/gromox` permissions and the repair script. |
+| **`tests/test_log_retention.py`** | Validates the Admin UI log reader (formats, `after` filter, rotated-log fallback) and the logrotate dry run. |
+| **`tests/test_mailbox_ownership.py`** | Validates gromox ownership of the mailbox volume and the repair script. |
 | **`tests/test_bayes_sync.py`** | Validates batched Bayes sync engine, spam/ham/trash transitions, and scan cost. |
 | **`tests/test_healthcheck.py`** | Validates a healthy container passes, stopped-service diagnostics, and the full-volume alert. |
 

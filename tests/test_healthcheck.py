@@ -15,6 +15,8 @@ and storage health:
 import subprocess
 import sys
 
+from env_helper import container_exec, wait_until
+
 
 def test_healthy_container():
     print("    [>] 1. Verifying healthy container passes healthcheck...")
@@ -50,6 +52,10 @@ def test_stopped_service():
 
     if test_svc not in combined_output:
         print(f"[-] FAIL: Missing stopped service '{test_svc}' in output:\n{combined_output}", file=sys.stderr)
+        sys.exit(1)
+
+    if not wait_until(lambda: "RUNNING" in container_exec("supervisorctl", "status", test_svc).stdout, timeout=60):
+        print(f"[-] FAIL: {test_svc} did not return to RUNNING after the test", file=sys.stderr)
         sys.exit(1)
 
     print("    [+] Stopped service correctly failed healthcheck with service diagnostic.")

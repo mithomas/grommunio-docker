@@ -3,11 +3,11 @@
 Verification Test: Admin API Authentication
 1. Invalid credentials are rejected with HTTP 401.
 2. Valid credentials issue a grommunioAuthJwt token.
-3. The token grants access to a protected endpoint.
+3. The token grants access to a protected endpoint; missing or forged tokens are rejected with 401.
 """
 import sys
 
-from env_helper import admin_session, api
+from env_helper import AdminSession, admin_session, api
 
 
 def check_admin_auth():
@@ -31,6 +31,20 @@ def check_admin_auth():
         print(f"    [-] Protected endpoint returned HTTP {status} with token", file=sys.stderr)
         return False
     print("    [+] Protected endpoint accessible with token.")
+
+    status, _ = api("GET", "/domains")
+    if status != 401:
+        print(f"    [-] Protected endpoint without a token returned HTTP {status}, expected 401", file=sys.stderr)
+        return False
+    print("    [+] Protected endpoint rejects requests without a token (HTTP 401).")
+
+    head, payload, sig = session.token.split(".")
+    forged = AdminSession(".".join([head, payload, ("A" if sig[0] != "A" else "B") + sig[1:]]), session.csrf)
+    status, _ = api("GET", "/domains", session=forged)
+    if status != 401:
+        print(f"    [-] Token with a forged signature returned HTTP {status}, expected 401", file=sys.stderr)
+        return False
+    print("    [+] Token with a forged signature is rejected (HTTP 401).")
     return True
 
 if __name__ == "__main__":

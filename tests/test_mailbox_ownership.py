@@ -1,86 +1,77 @@
 #!/usr/bin/env python3
 """
 Verification Test: Mailbox Volume Ownership & Repair
-1. /var/lib/gromox, /var/lib/gromox/user and existing mailbox databases are accessible to the daemons.
-2. /usr/local/bin/grommunio-fix-permissions.sh runs in shallow and recursive mode inside the container.
+1. /var/lib/gromox, its user store and existing mailbox directories are owned by gromox:gromox.
+2. grommunio-fix-permissions.sh repairs a root-owned tree: 'shallow' fixes only the top level,
+   'recursive' fixes everything below it.
 """
-import subprocess
 import sys
 
+from env_helper import container_exec
 
-def test_mailbox_storage_integrity():
-    print("    [>] 1. Validating in-container mailbox volume permissions & access...")
-    verify_script = r'''
-import os
-import stat
-import sys
+PROBE = "/var/lib/gromox/ownership-probe"
+PROBE_FILE = f"{PROBE}/nested/deep/file"
 
-# Check /var/lib/gromox
-if not os.path.exists("/var/lib/gromox"):
-    print("FAIL: /var/lib/gromox does not exist", file=sys.stderr)
-    sys.exit(1)
 
-st = os.stat("/var/lib/gromox")
-# Ensure directory is writable by owner/group
-mode = oct(stat.S_IMODE(st.st_mode))
-if (st.st_mode & 0o770) != 0o770:
-    print(f"FAIL: /var/lib/gromox has unexpected mode: {mode}", file=sys.stderr)
-    sys.exit(1)
+def owner(path):
+    res = container_exec("stat", "-c", "%U:%G", path)
+    return res.stdout.strip() if res.returncode == 0 else None
 
-# Check /var/lib/gromox/user if present
-if os.path.exists("/var/lib/gromox/user"):
-    st_user = os.stat("/var/lib/gromox/user")
-    if (st_user.st_mode & 0o700) != 0o700:
-        print("FAIL: /var/lib/gromox/user not accessible to owner", file=sys.stderr)
-        sys.exit(1)
 
-print("OK_MAILBOX_PERMISSIONS")
-'''
-    res = subprocess.run(
-        ["docker", "exec", "-i", "grommunio", "python3", "-c", verify_script],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    if res.returncode != 0 or "OK_MAILBOX_PERMISSIONS" not in res.stdout:
-        print(f"    [-] Mailbox storage permission check failed:\n{res.stderr or res.stdout}", file=sys.stderr)
+def test_mailbox_storage_ownership():
+    print("    [>] 1. Validating gromox ownership of the mailbox volume...")
+    for path in ("/var/lib/gromox", "/var/lib/gromox/user"):
+        if owner(path) != "gromox:gromox":
+            print(f"    [-] {path} is owned by {owner(path)}, expected gromox:gromox", file=sys.stderr)
+            return False
+
+    res = container_exec("find", "/var/lib/gromox/user", "-mindepth", "2", "-maxdepth", "2",
+                         "(", "!", "-user", "gromox", "-o", "!", "-group", "gromox", ")")
+    if res.returncode != 0 or res.stdout.strip():
+        print(f"    [-] Mailbox directories not owned by gromox:gromox:\n{res.stdout or res.stderr}", file=sys.stderr)
         return False
-
-    print("    [+] /var/lib/gromox and user mailbox stores have correct owner permissions.")
+    print("    [+] /var/lib/gromox, the user store and mailbox directories are owned by gromox:gromox.")
     return True
 
 
-def test_repair_script_execution():
-    print("    [>] 2. Validating on-demand repair utility in container (shallow and recursive)...")
-    res_shallow = subprocess.run(
-        ["docker", "exec", "-i", "grommunio", "/usr/local/bin/grommunio-fix-permissions.sh", "shallow"],
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
-    if res_shallow.returncode != 0 or "Permissions repair (shallow) completed successfully" not in res_shallow.stdout:
-        print(f"    [-] Repair utility shallow execution failed:\n{res_shallow.stderr or res_shallow.stdout}", file=sys.stderr)
-        return False
+def test_repair_script():
+    print("    [>] 2. Validating the repair utility on a root-owned tree...")
+    try:
+        setup = container_exec("sh", "-c", f"mkdir -p {PROBE}/nested/deep && touch {PROBE_FILE}")
+        if setup.returncode != 0 or owner(PROBE_FILE) != "root:root":
+            print(f"    [-] Could not create the root-owned probe tree: {setup.stderr}", file=sys.stderr)
+            return False
 
-    res_rec = subprocess.run(
-        ["docker", "exec", "-i", "grommunio", "/usr/local/bin/grommunio-fix-permissions.sh", "recursive"],
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
-    if res_rec.returncode != 0 or "Permissions repair (recursive) completed successfully" not in res_rec.stdout:
-        print(f"    [-] Repair utility recursive execution failed:\n{res_rec.stderr or res_rec.stdout}", file=sys.stderr)
-        return False
+        res = container_exec("/usr/local/bin/grommunio-fix-permissions.sh", "shallow")
+        if res.returncode != 0:
+            print(f"    [-] Shallow repair failed:\n{res.stderr or res.stdout}", file=sys.stderr)
+            return False
+        if owner(PROBE) != "gromox:gromox":
+            print(f"    [-] Shallow repair did not fix the top level ({owner(PROBE)})", file=sys.stderr)
+            return False
+        if owner(PROBE_FILE) != "root:root":
+            print(f"    [-] Shallow repair unexpectedly descended into mailbox data ({owner(PROBE_FILE)})", file=sys.stderr)
+            return False
+        print("    [+] Shallow repair fixed the top level only.")
 
-    print("    [+] /usr/local/bin/grommunio-fix-permissions.sh executed successfully in both shallow and recursive modes.")
-    return True
+        res = container_exec("/usr/local/bin/grommunio-fix-permissions.sh", "recursive")
+        if res.returncode != 0:
+            print(f"    [-] Recursive repair failed:\n{res.stderr or res.stdout}", file=sys.stderr)
+            return False
+        if owner(PROBE_FILE) != "gromox:gromox":
+            print(f"    [-] Recursive repair left {PROBE_FILE} owned by {owner(PROBE_FILE)}", file=sys.stderr)
+            return False
+        print("    [+] Recursive repair restored ownership of nested files.")
+        return True
+    finally:
+        container_exec("rm", "-rf", PROBE)
 
 
 def main():
     print("==> Checking Mailbox Volume Ownership & Repair...")
-    if not test_mailbox_storage_integrity():
+    if not test_mailbox_storage_ownership():
         return 1
-    if not test_repair_script_execution():
+    if not test_repair_script():
         return 1
     print("    [+] ALL MAILBOX OWNERSHIP VERIFICATIONS PASSED.")
     return 0

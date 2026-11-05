@@ -73,17 +73,20 @@ def check_webmail_root_ingress():
         print("    [-] No Set-Cookie headers received from Webmail.", file=sys.stderr)
         return False
 
-    cookie_secure_found = False
-    for c in cookies:
-        c_lower = c.lower()
-        if "secure" in c_lower and "httponly" in c_lower:
-            cookie_secure_found = True
-            break
-
-    if not cookie_secure_found:
-        print(f"    [-] Cookies missing 'secure' and 'HttpOnly' flags: {cookies}", file=sys.stderr)
+    parsed = []
+    for header in cookies:
+        name = header.split(";", 1)[0].split("=", 1)[0].strip()
+        attrs = {part.strip().split("=", 1)[0].lower() for part in header.split(";")[1:]}
+        parsed.append((name, attrs))
+    if "__Secure-GROMMUNIO_WEB" not in {name for name, _ in parsed}:
+        print(f"    [-] Session cookie __Secure-GROMMUNIO_WEB not issued: {cookies}", file=sys.stderr)
         return False
-    print("    [+] Session cookies have 'secure', 'HttpOnly', and 'SameSite' flags.")
+    for name, attrs in parsed:
+        missing = {"secure", "httponly", "samesite"} - attrs
+        if missing:
+            print(f"    [-] Cookie '{name}' lacks attributes {sorted(missing)}: {cookies}", file=sys.stderr)
+            return False
+    print(f"    [+] All {len(parsed)} cookies carry Secure, HttpOnly and SameSite attributes.")
 
     # 4. Static assets loading
     asset_urls = [
