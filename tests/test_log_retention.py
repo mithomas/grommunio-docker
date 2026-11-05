@@ -213,8 +213,8 @@ import sys
 # Check if logrotate is installed in container
 which_res = subprocess.run(["which", "logrotate"], capture_output=True, text=True)
 if which_res.returncode != 0:
-    print("SKIP: logrotate not yet built into running container image")
-    sys.exit(0)
+    print("FAIL: logrotate is not installed in the container image", file=sys.stderr)
+    sys.exit(1)
 
 # Validate syntax of logrotate configuration
 d_res = subprocess.run(["logrotate", "-d", "-s", "/var/log/logrotate.status", "/etc/logrotate.d/grommunio"],
@@ -239,10 +239,7 @@ print("OK_CONTAINER_LOGROTATE")
     if res.returncode != 0:
         print(f"    [-] In-container logrotate check failed:\n{res.stderr or res.stdout}", file=sys.stderr)
         return False
-    if "SKIP:" in res.stdout:
-        print(f"    [~] {res.stdout.strip()} (will be verified after container rebuild)")
-    else:
-        print("    [+] In-container logrotate syntax and debug evaluation verified.")
+    print("    [+] In-container logrotate syntax and debug evaluation verified.")
     return True
 
 

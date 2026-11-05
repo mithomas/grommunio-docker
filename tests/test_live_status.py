@@ -16,35 +16,21 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from env_helper import get_admin_port, get_http_port, load_env_secret
+from env_helper import admin_session, get_admin_port, get_http_port
 
 
 def check_live_status():
     admin_port = get_admin_port()
     http_port = get_http_port()
     print("==> Checking Admin UI Live Status & Nginx VTS telemetry...")
-    admin_pw = load_env_secret("ADMIN_PASSWORD", "admin_secret")
-    login_url = f"http://localhost:{admin_port}/api/v1/login"
 
     # Step 1: Authenticate to get grommunioAuthJwt
-    login_data = urllib.parse.urlencode({"user": "admin", "pass": admin_pw}).encode()
-    login_req = urllib.request.Request(
-        login_url,
-        data=login_data,
-        headers={"Content-Type": "application/x-www-form-urlencoded"}
-    )
-
     try:
-        with urllib.request.urlopen(login_req, timeout=10) as resp:
-            body = json.loads(resp.read().decode("utf-8"))
-            token = body.get("grommunioAuthJwt")
-            if not token:
-                print("    [-] Login succeeded but grommunioAuthJwt missing from response.", file=sys.stderr)
-                return False
-            print(f"    [+] Logged in to Admin API (token: {token[:16]}...).")
-    except Exception as ex:
-        print(f"    [-] Failed to login to Admin API: {ex}", file=sys.stderr)
+        token = admin_session().token
+    except RuntimeError as ex:
+        print(f"    [-] {ex}", file=sys.stderr)
         return False
+    print(f"    [+] Logged in to Admin API (token: {token[:16]}...).")
 
     auth_headers = {
         "Cookie": f"grommunioAuthJwt={token}",

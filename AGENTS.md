@@ -72,6 +72,9 @@ python3 tests/test_healthcheck.py
 - **Standalone Scripts**: All new tests MUST be added as standalone executable scripts directly inside the `tests/` folder (named `tests/test_<scope>.py`). Each script must be independently runnable (`python3 tests/test_<scope>.py`) and exit with status code 0 on success or non-zero on failure.
 - **Suite Registration**: Always register new test scripts in the `TESTS` array in `tests/run_all.py` so they run automatically during full suite execution.
 - **Documentation**: Update the test tables in `AGENTS.md` and `README.md` whenever a new test script is introduced.
+- **Shared Helpers**: Use `tests/env_helper.py` (`admin_session()`, `api()`, `container_exec()`, `wait_until()`, `send_mail()`, `mailbox_contains()`, `ensure_testuser()`) instead of re-implementing login, container access, sleeps or fixtures. Poll with `wait_until`, never fixed `sleep`.
+- **Skips**: A test that cannot run exits with `SKIP_EXIT` (77). `run_all.py` reports it as skipped locally and fails it when `CI` is set unless the script is listed in `ALLOW_SKIP`.
+- **Startup Behavior**: Test entrypoint/startup behavior with `tests/container_harness.py` (`run_startup()`, `Container`, `ScratchDatabase`), which runs the real image against a disposable database and refuses to touch the live one. Requires the compose `test` profile.
 
 ---
 

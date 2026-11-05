@@ -25,7 +25,7 @@ from email.mime.text import MIMEText
 
 PRECTIME_REGEX = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{1,6}$")
 
-from env_helper import get_admin_port, get_bind_ip, get_smtp_port, load_env_secret
+from env_helper import admin_session, ensure_testuser, get_admin_port, get_bind_ip, get_smtp_port
 
 
 def check_monitoring_logs():
@@ -33,28 +33,15 @@ def check_monitoring_logs():
     smtp_port = get_smtp_port()
     bind_ip = get_bind_ip()
     print("==> Checking Admin UI Monitoring Logs (Exim & Service Log Monitoring)...")
-    admin_pw = load_env_secret("ADMIN_PASSWORD", "admin_secret")
-    login_url = f"http://localhost:{admin_port}/api/v1/login"
+    ensure_testuser()
 
     # Step 1: Authenticate to Admin API
-    login_data = urllib.parse.urlencode({"user": "admin", "pass": admin_pw}).encode()
-    login_req = urllib.request.Request(
-        login_url,
-        data=login_data,
-        headers={"Content-Type": "application/x-www-form-urlencoded"}
-    )
-
     try:
-        with urllib.request.urlopen(login_req, timeout=10) as resp:
-            body = json.loads(resp.read().decode("utf-8"))
-            token = body.get("grommunioAuthJwt")
-            if not token:
-                print("    [-] Login succeeded but grommunioAuthJwt missing.", file=sys.stderr)
-                return False
-            print(f"    [+] Logged in to Admin API (token: {token[:16]}...).")
-    except Exception as exc:
-        print(f"    [-] Login failed: {exc}", file=sys.stderr)
+        token = admin_session().token
+    except RuntimeError as exc:
+        print(f"    [-] {exc}", file=sys.stderr)
         return False
+    print(f"    [+] Logged in to Admin API (token: {token[:16]}...).")
 
     auth_headers = {"Cookie": f"grommunioAuthJwt={token}"}
 

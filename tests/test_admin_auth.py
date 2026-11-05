@@ -1,78 +1,36 @@
 #!/usr/bin/env python3
 """
-Verification Test 3: Admin API Authentication
-Tests authentication against grommunio-admin-api:
-1. Verifies that invalid credentials are rejected with HTTP 401.
-2. Authenticates user 'admin' using ADMIN_PASSWORD from environment / .env.
-3. Obtains and validates signed grommunioAuthJwt token.
-4. Queries protected endpoint (/api/v1/system/status) passing the token cookie.
+Verification Test: Admin API Authentication
+1. Invalid credentials are rejected with HTTP 401.
+2. Valid credentials issue a grommunioAuthJwt token.
+3. The token grants access to a protected endpoint.
 """
-import urllib.request
-import urllib.parse
-import urllib.error
-import json
-import os
 import sys
 
-from env_helper import get_admin_port, load_env_secret
+from env_helper import admin_session, api
+
 
 def check_admin_auth():
-    print("==> [3/5] Checking Admin API authentication...")
-    admin_pw = load_env_secret("ADMIN_PASSWORD", "admin_secret")
-    admin_port = get_admin_port()
-    login_url = f"http://localhost:{admin_port}/api/v1/login"
+    print("==> Checking Admin API authentication...")
 
-    # Step 1: Verify rejection of invalid credentials
-    bad_data = urllib.parse.urlencode({"user": "admin", "pass": "invalid_wrong_pw"}).encode()
-    req_bad = urllib.request.Request(
-        login_url,
-        data=bad_data,
-        headers={"Content-Type": "application/x-www-form-urlencoded"}
-    )
-    try:
-        urllib.request.urlopen(req_bad)
-        print("    [-] Invalid credentials test FAILED: Unexpected 200 OK", file=sys.stderr)
+    status, _ = api("POST", "/login", form={"user": "admin", "pass": "invalid_wrong_pw"})
+    if status != 401:
+        print(f"    [-] Invalid password returned HTTP {status}, expected 401", file=sys.stderr)
         return False
-    except urllib.error.HTTPError as err:
-        if err.code == 401:
-            print("    [+] Invalid password correctly rejected with HTTP 401.")
-        else:
-            print(f"    [-] Invalid password returned unexpected HTTP {err.code}", file=sys.stderr)
-            return False
+    print("    [+] Invalid password correctly rejected with HTTP 401.")
 
-    # Step 2: Authenticate with valid password
-    good_data = urllib.parse.urlencode({"user": "admin", "pass": admin_pw}).encode()
-    req_good = urllib.request.Request(
-        login_url,
-        data=good_data,
-        headers={"Content-Type": "application/x-www-form-urlencoded"}
-    )
     try:
-        with urllib.request.urlopen(req_good) as resp:
-            data = json.loads(resp.read().decode())
-            token = data.get("grommunioAuthJwt")
-            if not token:
-                print("    [-] Login succeeded but grommunioAuthJwt token missing from payload.", file=sys.stderr)
-                return False
-            print(f"    [+] Login succeeded. JWT token issued ({token[:16]}...).")
-    except Exception as ex:
-        print(f"    [-] Valid login failed: {ex}", file=sys.stderr)
+        session = admin_session()
+    except RuntimeError as ex:
+        print(f"    [-] {ex}", file=sys.stderr)
         return False
+    print(f"    [+] Login succeeded. JWT token issued ({session.token[:16]}...).")
 
-    # Step 3: Access protected endpoint using JWT cookie
-    prot_url = f"http://localhost:{admin_port}/api/v1/domains"
-    req_prot = urllib.request.Request(
-        prot_url,
-        headers={"Cookie": f"grommunioAuthJwt={token}"}
-    )
-    try:
-        with urllib.request.urlopen(req_prot) as resp:
-            domains_data = json.loads(resp.read().decode())
-            print(f"    [+] Protected endpoint accessible. Domains count: {len(domains_data)}")
-    except Exception as ex:
-        print(f"    [-] Failed to access protected endpoint with token: {ex}", file=sys.stderr)
+    status, domains = api("GET", "/domains", session=session)
+    if status != 200 or domains is None:
+        print(f"    [-] Protected endpoint returned HTTP {status} with token", file=sys.stderr)
         return False
-
+    print("    [+] Protected endpoint accessible with token.")
     return True
 
 if __name__ == "__main__":

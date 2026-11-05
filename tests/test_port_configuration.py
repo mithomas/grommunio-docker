@@ -151,7 +151,6 @@ def test_test_scripts_dynamic_ports():
     scripts_to_check = [
         ("test_endpoints.py", ["get_http_port", "get_admin_port", "get_rspamd_port"]),
         ("test_webmail_security.py", ["get_http_port"]),
-        ("test_admin_auth.py", ["get_admin_port"]),
         ("test_rspamd_auth.py", ["get_rspamd_port"]),
         ("test_mail_pipeline.py", ["get_smtp_port", "get_admin_port"]),
         ("test_live_status.py", ["get_admin_port", "get_http_port"]),

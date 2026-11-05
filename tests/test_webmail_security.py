@@ -28,12 +28,13 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from env_helper import get_http_port
+from env_helper import ensure_testuser, get_http_port
 
 def check_webmail_root_ingress():
     http_port = get_http_port()
     base_url = f"http://localhost:{http_port}"
     print(f"==> Checking Webmail Root Ingress ({base_url}/)...")
+    ensure_testuser()
     url = f"{base_url}/"
     req = urllib.request.Request(url, headers={"User-Agent": "GrommunioTest/1.0"})
 

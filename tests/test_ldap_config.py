@@ -15,33 +15,22 @@ import json
 import os
 import sys
 
-from env_helper import get_admin_port, load_env_secret
+from env_helper import admin_session, get_admin_port
 
 def check_ldap_config():
     admin_port = get_admin_port()
     print("==> Checking Admin API LDAP configuration & disk persistence...")
-    admin_pw = load_env_secret("ADMIN_PASSWORD", "admin_secret")
-    login_url = f"http://localhost:{admin_port}/api/v1/login"
 
     # Step 1: Authenticate and retrieve JWT + CSRF token
-    login_data = urllib.parse.urlencode({"user": "admin", "pass": admin_pw}).encode()
-    req_login = urllib.request.Request(
-        login_url,
-        data=login_data,
-        headers={"Content-Type": "application/x-www-form-urlencoded"}
-    )
     try:
-        with urllib.request.urlopen(req_login) as resp:
-            auth_data = json.loads(resp.read().decode())
-            token = auth_data.get("grommunioAuthJwt")
-            csrf = auth_data.get("csrf")
-            if not token or not csrf:
-                print("    [-] Missing JWT token or CSRF token from login response.", file=sys.stderr)
-                return False
-            print("    [+] Admin API authenticated; JWT and CSRF tokens retrieved.")
-    except Exception as ex:
-        print(f"    [-] Login failed: {ex}", file=sys.stderr)
+        token, csrf = admin_session()
+    except RuntimeError as ex:
+        print(f"    [-] {ex}", file=sys.stderr)
         return False
+    if not csrf:
+        print("    [-] Missing CSRF token from login response.", file=sys.stderr)
+        return False
+    print("    [+] Admin API authenticated; JWT and CSRF tokens retrieved.")
 
     # Step 2: Fetch current LDAP configuration via GET /api/v1/system/mconf/ldap
     get_url = f"http://localhost:{admin_port}/api/v1/system/mconf/ldap"

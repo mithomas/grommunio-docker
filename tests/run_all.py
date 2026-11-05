@@ -2,71 +2,59 @@
 """
 Test Suite Runner
 Executes all verification tests in sequence and reports a summary table.
+A test exits with SKIP_EXIT (77) when it cannot run; skips fail the run when CI is set
+unless the script is listed in ALLOW_SKIP (comma-separated).
 """
-import subprocess
 import os
+import subprocess
 import sys
 
+from env_helper import SKIP_EXIT
+
 TESTS = [
-    ("test_services.py", "Supervisor Services (All 14 Running)", False),
-    ("test_endpoints.py", "HTTP Ingress Endpoints & Content-Types", False),
-    ("test_admin_auth.py", "Grommunio Admin API & JWT Auth", False),
-    ("test_rspamd_auth.py", "Rspamd Dashboard Dedicated Auth", False),
-    ("test_ldap_config.py", "Admin API LDAP Config & Disk Persistence", False),
-    ("test_ldap.py", "OpenLDAP Integration & User Downsync", True),
-    ("test_webmail_security.py", "Webmail Root Ingress & Cookie Security", False),
-    ("test_mail_pipeline.py", "Exim -> Rspamd -> Gromox Pipeline & Spam History", False),
-    ("test_live_status.py", "Admin UI Live Status & Nginx VTS Telemetry", False),
-    ("test_monitoring_logs.py", "Admin UI Monitoring Logs (Exim & Daemons)", False),
-    ("test_defaults.py", "Mailbox Creation Defaults & Privileges", False),
-    ("test_db_socket.py", "MariaDB Unix Socket (DB_SOCKET) & Exim DB-Free Routing", False),
-    ("test_password_escaping.py", "Password Special Characters & Direct Controller Auth", False),
-    ("test_port_configuration.py", "Dedicated Host Port Mapping Decoupling", False),
-    ("test_db_init_safety.py", "Database Init & Migration Fail-Safe Behavior", False),
-    ("test_log_retention.py", "Persistent Log Growth Bounding & 1-Year Retention", False),
-    ("test_mailbox_ownership.py", "Mailbox Volume Ownership Optimization & Repair", False),
-    ("test_bayes_sync.py", "Bayes Synchronization Engine & Scan Cost Reduction", False),
-    ("test_healthcheck.py", "Container Healthcheck Diagnostics & Thresholds", False),
+    ("test_services.py", "Supervisor Services (All 14 Running)"),
+    ("test_endpoints.py", "HTTP Ingress Endpoints & Content-Types"),
+    ("test_admin_auth.py", "Grommunio Admin API & JWT Auth"),
+    ("test_rspamd_auth.py", "Rspamd Dashboard Dedicated Auth"),
+    ("test_ldap_config.py", "Admin API LDAP Config & Disk Persistence"),
+    ("test_ldap.py", "OpenLDAP Integration & User Downsync"),
+    ("test_webmail_security.py", "Webmail Root Ingress & Cookie Security"),
+    ("test_mail_pipeline.py", "Exim -> Rspamd -> Gromox Pipeline & Spam History"),
+    ("test_live_status.py", "Admin UI Live Status & Nginx VTS Telemetry"),
+    ("test_monitoring_logs.py", "Admin UI Monitoring Logs (Exim & Daemons)"),
+    ("test_defaults.py", "Mailbox Creation Defaults & Privileges"),
+    ("test_db_socket.py", "MariaDB Unix Socket (DB_SOCKET) & Exim DB-Free Routing"),
+    ("test_password_escaping.py", "Password Special Characters & Direct Controller Auth"),
+    ("test_port_configuration.py", "Dedicated Host Port Mapping Decoupling"),
+    ("test_db_init_safety.py", "Database Init & Migration Fail-Safe Behavior"),
+    ("test_log_retention.py", "Persistent Log Growth Bounding & 1-Year Retention"),
+    ("test_mailbox_ownership.py", "Mailbox Volume Ownership Optimization & Repair"),
+    ("test_bayes_sync.py", "Bayes Synchronization Engine & Scan Cost Reduction"),
+    ("test_healthcheck.py", "Container Healthcheck Diagnostics & Thresholds"),
 ]
 
-from env_helper import get_bind_ip, get_ldap_port
-
-def is_port_open(port=None, host=None):
-    import socket
-    if port is None:
-        port = get_ldap_port()
-    if host is None:
-        host = get_bind_ip()
-    try:
-        with socket.create_connection((host, port), timeout=1.0):
-            return True
-    except (socket.error, OSError):
-        return False
 
 def main():
     test_dir = os.path.dirname(os.path.abspath(__file__))
+    ci = os.environ.get("CI", "").lower() in ("1", "true", "yes")
+    allow_skip = {s.strip() for s in os.environ.get("ALLOW_SKIP", "").split(",") if s.strip()}
     results = []
 
     print("==================================================================")
     print("      Grommunio Debian 13 Container Verification Test Suite       ")
     print("==================================================================\n")
 
-    for item in TESTS:
-        script = item[0]
-        description = item[1]
-        is_optional = item[2] if len(item) > 2 else False
-
-        if script == "test_ldap.py" and not is_port_open():
-            ldap_p = get_ldap_port()
-            print(f"[-] Skipping {script} (OpenLDAP companion service port {ldap_p} not listening)\n")
-            results.append((script, description, "SKIPPED"))
-            continue
-
-        script_path = os.path.join(test_dir, script)
-        cmd = [sys.executable, script_path]
-        proc = subprocess.run(cmd)
-        passed = (proc.returncode == 0)
-        results.append((script, description, "PASSED" if passed else "FAILED"))
+    for script, description in TESTS:
+        proc = subprocess.run([sys.executable, os.path.join(test_dir, script)])
+        if proc.returncode == 0:
+            status = "PASSED"
+        elif proc.returncode == SKIP_EXIT:
+            status = "SKIPPED" if (not ci or script in allow_skip) else "FAILED"
+            if status == "FAILED":
+                print(f"[-] {script} was skipped, which is not allowed under CI (see ALLOW_SKIP).\n", file=sys.stderr)
+        else:
+            status = "FAILED"
+        results.append((script, description, status))
 
     print("\n==================================================================")
     print("                         TEST SUMMARY                             ")

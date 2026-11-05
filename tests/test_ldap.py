@@ -8,22 +8,10 @@ Verifies:
 4. Synchronization of LDAP user via 'grommunio-admin ldap downsync -c' into Grommunio.
 5. Presence and provisioning of 'testuser@example.com' in Grommunio user store.
 """
-import socket
 import subprocess
 import sys
 
-from env_helper import get_bind_ip, get_ldap_port
-
-def is_ldap_port_open(host=None, port=None, timeout=2.0):
-    if host is None:
-        host = get_bind_ip()
-    if port is None:
-        port = get_ldap_port()
-    try:
-        with socket.create_connection((host, port), timeout=timeout):
-            return True
-    except (socket.error, OSError):
-        return False
+from env_helper import SKIP_EXIT, get_bind_ip, get_ldap_port, ldap_available
 
 def run_compose_cmd(cmd_args):
     cmd = ["docker", "compose", "exec", "-T", "grommunio"] + cmd_args
@@ -34,11 +22,11 @@ def check_ldap_integration():
     bind_ip = get_bind_ip()
     print("==> Checking OpenLDAP companion integration and user provisioning...")
 
-    # Step 1: Check if OpenLDAP port is listening on host
-    if not is_ldap_port_open():
+    # Step 1: OpenLDAP is optional (compose test profile); report as skipped when absent
+    if not ldap_available():
         print(f"    [!] OpenLDAP container (port {ldap_port}) is not accessible on {bind_ip}.")
         print("        Ensure the test profile is running: docker compose --profile test up -d")
-        return False
+        return None
     print(f"    [+] OpenLDAP port {ldap_port} is open and reachable.")
 
     # Step 2: Test 'grommunio-admin ldap info' from within grommunio container
@@ -87,6 +75,9 @@ def check_ldap_integration():
 
 def main():
     success = check_ldap_integration()
+    if success is None:
+        print("[~] LDAP INTEGRATION TEST SKIPPED.")
+        return SKIP_EXIT
     if success:
         print("[+] LDAP INTEGRATION TEST PASSED!")
         return 0

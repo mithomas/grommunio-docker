@@ -17,7 +17,7 @@ import sys
 import urllib.parse
 import urllib.request
 
-from env_helper import get_admin_port, load_env_secret
+from env_helper import admin_session, get_admin_port, load_env_secret
 
 
 def parse_quota(val):
@@ -50,30 +50,16 @@ def parse_quota(val):
 
 def check_defaults():
     print("==> Checking Mailbox Creation Defaults & Privileges...")
-    admin_pw = load_env_secret("ADMIN_PASSWORD", "admin_secret")
     admin_port = get_admin_port()
-    login_url = f"http://localhost:{admin_port}/api/v1/login"
     defaults_url = f"http://localhost:{admin_port}/api/v1/defaults/createParams"
 
     # Step 1: Authenticate to Admin API
-    login_payload = urllib.parse.urlencode({"user": "admin", "pass": admin_pw}).encode()
     try:
-        req_login = urllib.request.Request(
-            login_url,
-            data=login_payload,
-            headers={"Content-Type": "application/x-www-form-urlencoded"}
-        )
-        with urllib.request.urlopen(req_login, timeout=5) as resp:
-            data = json.loads(resp.read().decode())
-            token = data.get("grommunioAuthJwt")
-            csrf = data.get("csrf")
-            if not token:
-                print("    [-] Failed to obtain JWT token from login response.", file=sys.stderr)
-                return False
-            print("    [+] Successfully authenticated to Admin API.")
-    except Exception as ex:
-        print(f"    [-] Admin login failed: {ex}", file=sys.stderr)
+        token, csrf = admin_session()
+    except RuntimeError as ex:
+        print(f"    [-] {ex}", file=sys.stderr)
         return False
+    print("    [+] Successfully authenticated to Admin API.")
 
     # Step 2: Fetch current defaults
     try:

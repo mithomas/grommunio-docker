@@ -17,7 +17,7 @@ import time
 import os
 import sys
 
-from env_helper import get_admin_port, get_bind_ip, get_smtp_port, load_env_secret
+from env_helper import admin_session, get_admin_port, get_bind_ip, get_smtp_port
 
 def check_mail_pipeline():
     smtp_port = get_smtp_port()
@@ -26,7 +26,6 @@ def check_mail_pipeline():
     print("==> [5/5] Checking Mail Pipeline & Spam History population...")
     timestamp = int(time.time())
     subject = f"Verification Test Email - {timestamp}"
-    admin_pw = load_env_secret("ADMIN_PASSWORD", "admin_secret")
 
     # Step 1: Send email via SMTP to container Exim on host-mapped port
     msg = MIMEText(f"This is an automated verification email sent at {timestamp} to test Rspamd scanning and Spam History logging.")
@@ -50,17 +49,9 @@ def check_mail_pipeline():
     time.sleep(1.5)
 
     # Step 2: Authenticate to Admin API
-    login_url = f"http://localhost:{admin_port}/api/v1/login"
-    login_payload = urllib.parse.urlencode({"user": "admin", "pass": admin_pw}).encode()
     try:
-        req_login = urllib.request.Request(
-            login_url,
-            data=login_payload,
-            headers={"Content-Type": "application/x-www-form-urlencoded"}
-        )
-        with urllib.request.urlopen(req_login) as resp:
-            token = json.loads(resp.read().decode())["grommunioAuthJwt"]
-    except Exception as ex:
+        token = admin_session().token
+    except RuntimeError as ex:
         print(f"    [-] Admin login failed during pipeline test: {ex}", file=sys.stderr)
         return False
 
