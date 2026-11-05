@@ -34,6 +34,9 @@ def test_static_contracts():
     assert "pct + 0 >= 95" in content, (
         "FAIL: container-healthcheck.sh missing numeric comparison 'pct + 0 >= 95'"
     )
+    assert "curl -fs -o /dev/null" in content, (
+        "FAIL: container-healthcheck.sh missing 'curl -fs -o /dev/null' HTTP probe pattern"
+    )
     print("    [+] Static contracts verified.")
 
 

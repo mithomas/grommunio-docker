@@ -8,7 +8,6 @@ if [ -z "$STATUS" ]; then
     exit 1
 fi
 
-# Filter out empty lines; verify that column 2 is 'RUNNING' for every service
 NOT_RUNNING=$(echo "$STATUS" | awk 'NF > 1 && $2 != "RUNNING" { print $1, $2 }')
 if [ -n "$NOT_RUNNING" ]; then
     echo "HEALTHCHECK FAILED: services not in RUNNING state:" >&2
@@ -16,40 +15,23 @@ if [ -n "$NOT_RUNNING" ]; then
     exit 1
 fi
 
-# 2. Check local HTTP listener availability (internal Webmail / ActiveSync port 8080)
-# Note: Internal services listen on fixed standard ports in the container network namespace,
-# regardless of custom host-mapped ports (HTTP_PORT, ADMIN_PORT, RSPAMD_PORT) defined in .env.
-INTERNAL_HTTP_PORT=8080
-HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 "http://127.0.0.1:${INTERNAL_HTTP_PORT}/" || true)
-
-# Nginx responds with 200 or 301/302 redirect for webmail
-case "$HTTP_STATUS" in
-    200|301|302)
-        ;;
-    *)
-        echo "HEALTHCHECK FAILED: HTTP probe on port ${INTERNAL_HTTP_PORT} returned status ${HTTP_STATUS}" >&2
-        exit 1
-        ;;
-esac
-
-# 3. Check Admin API status probe (internal port 8081)
-INTERNAL_ADMIN_PORT=8081
-ADMIN_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 "http://127.0.0.1:${INTERNAL_ADMIN_PORT}/api/v1/status" || true)
-if [ "$ADMIN_STATUS" != "200" ]; then
-    echo "HEALTHCHECK FAILED: Admin API status probe on port ${INTERNAL_ADMIN_PORT} returned status ${ADMIN_STATUS}" >&2
+# 2. Check HTTP probes on fixed internal listeners (Webmail :8080, Admin API :8081, Rspamd :11334)
+if ! curl -fs -o /dev/null --max-time 3 "http://127.0.0.1:8080/"; then
+    echo "HEALTHCHECK FAILED: Webmail probe on port 8080 failed" >&2
     exit 1
 fi
 
-# 4. Check Rspamd web interface probe (internal port 11334)
-INTERNAL_RSPAMD_PORT=11334
-RSPAMD_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 "http://127.0.0.1:${INTERNAL_RSPAMD_PORT}/" || true)
-if [ "$RSPAMD_STATUS" != "200" ]; then
-    echo "HEALTHCHECK FAILED: Rspamd probe on port ${INTERNAL_RSPAMD_PORT} returned status ${RSPAMD_STATUS}" >&2
+if ! curl -fs -o /dev/null --max-time 3 "http://127.0.0.1:8081/api/v1/status"; then
+    echo "HEALTHCHECK FAILED: Admin API status probe on port 8081 failed" >&2
     exit 1
 fi
 
-# 5. Check persistent volume storage capacity (/var/log and /var/lib/gromox)
-# Fail if usage exceeds 95% or free space is below 100MB (102400 KB) to prevent silent mail delivery stoppage.
+if ! curl -fs -o /dev/null --max-time 3 "http://127.0.0.1:11334/"; then
+    echo "HEALTHCHECK FAILED: Rspamd probe on port 11334 failed" >&2
+    exit 1
+fi
+
+# 3. Check persistent volume storage capacity (/var/log and /var/lib/gromox)
 LOW_SPACE=$(df -Pk /var/log /var/lib/gromox 2>/dev/null | awk 'NR > 1 {
     pct = $5; sub(/%/, "", pct);
     avail_kb = $4;
