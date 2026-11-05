@@ -184,9 +184,9 @@ def send_mail(rcpt: str, label: str = "Verification", body: str = "Automated ver
     return subject
 
 
-def mailbox_dir(address: str):
+def mailbox_dir(address: str, runner=None):
     """Returns the store directory of a Grommunio user, or None if the user does not exist."""
-    res = container_exec("grommunio-admin", "user", "show", address)
+    res = (runner or container_exec)("grommunio-admin", "user", "show", address)
     if res.returncode != 0:
         return None
     for line in res.stdout.splitlines():
@@ -208,12 +208,16 @@ print(c.execute(
 '''
 
 
-def mailbox_contains(address: str, subject_token: str) -> bool:
-    """True when a non-deleted message whose subject contains the token is stored for the user."""
-    maildir = mailbox_dir(address)
+def mailbox_contains(address: str, subject_token: str, runner=None) -> bool:
+    """True when a non-deleted message whose subject contains the token is stored for the user.
+
+    runner executes commands in the container under test (defaults to the compose service).
+    """
+    runner = runner or container_exec
+    maildir = mailbox_dir(address, runner)
     if not maildir:
         return False
-    res = container_exec("python3", "-c", _MAILBOX_QUERY, f"{maildir}/exmdb/exchange.sqlite3", subject_token)
+    res = runner("python3", "-c", _MAILBOX_QUERY, f"{maildir}/exmdb/exchange.sqlite3", subject_token)
     return res.returncode == 0 and res.stdout.strip().isdigit() and int(res.stdout.strip()) > 0
 
 
@@ -231,7 +235,9 @@ def ensure_testuser(address: str = "testuser@example.com", password: str = "test
     if ldap_available():
         container_exec("grommunio-admin", "ldap", "downsync", "-c")
     if not exists():
-        container_exec("grommunio-admin", "user", "create", "--altname", local, address)
+        # --no-defaults: the CLI rejects the quota keys of the configured creation defaults.
+        container_exec("grommunio-admin", "user", "create", "--no-defaults", "--privWeb", "true", "--privEas", "true",
+                       "--altname", local, address)
         container_exec("grommunio-admin", "passwd", address, "--password", password)
     if not exists():
         raise RuntimeError(f"Could not provision {address}")

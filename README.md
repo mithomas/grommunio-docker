@@ -369,7 +369,8 @@ A standalone test suite validating all container services, endpoints, credential
 | **`tests/test_defaults.py`** | Validates Admin UI mailbox creation defaults (`:8081`), language, protocols, and quotas. |
 | **`tests/test_ldap_config.py`** | Validates default group mappings and that LDAP config changes persist to disk. |
 | **`tests/test_ldap.py`** | Validates companion OpenLDAP (`:389`), directory search, and user mailbox downsync. |
-| **`tests/test_db_socket.py`** | Validates `DB_SOCKET` Unix socket handling and DB-free Exim domain routing. |
+| **`tests/test_db_socket.py`** | Validates `DB_SOCKET` with a custom socket path (entrypoint, Gromox and Admin API; throwaway containers). |
+| **`tests/test_multidomain_delivery.py`** | Validates `DOMAINS` routing: primary, alias and secondary-domain mail reaches the mailbox (throwaway containers). |
 | **`tests/test_password_escaping.py`** | Validates passwords with special characters ($, #, ', ", \, ;) in Rspamd hashing and default-credential gating. |
 | **`tests/test_db_init_safety.py`** | Validates the live schema is populated and `gromox-dbop -U` re-runs cleanly. |
 | **`tests/test_startup_safety.py`** | Validates default-credential refusal, DB failure diagnostics, SIGTERM during the schema lock (exit 143), and idempotent restart (throwaway containers). |
@@ -400,7 +401,7 @@ Two GitHub Actions workflows automate container builds, integration testing, and
 ### Quality Gate (Integration Testing)
 Before any image is pushed to Docker Hub:
 - Docker Buildx builds the image for `linux/amd64` and starts the test stack (`docker compose --profile test up -d`).
-- Container health is verified via `/usr/local/bin/container-healthcheck.sh` and all 18 verification tests (`python3 tests/run_all.py`) run in CI.
+- Container health is verified via `/usr/local/bin/container-healthcheck.sh` and all 19 verification tests (`python3 tests/run_all.py`) run in CI.
 - Publication to Docker Hub only proceeds if 100% of tests pass.
 
 ### Image Tagging Convention

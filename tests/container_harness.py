@@ -14,7 +14,7 @@ from env_helper import SKIP_EXIT, load_env_secret, wait_until
 
 DB_CONTAINER = "grommunio-db"
 
-# Mirrors the tmpfs layout in docker-compose.yml; persistent volumes become tmpfs so runs leave nothing behind.
+# Mirrors the tmpfs layout in docker-compose.yml.
 TMPFS = [
     "/run:rw,noexec,nosuid,size=64M",
     "/tmp:rw,size=128M",
@@ -26,12 +26,18 @@ TMPFS = [
     "/etc/gromox:rw,size=16M",
     "/etc/grommunio-admin-api:rw,size=16M",
     "/etc/grommunio-admin-common:rw,size=4M",
-    "/var/lib/gromox:rw,size=64M",
-    "/var/lib/rspamd:rw,size=64M",
-    "/var/lib/redis:rw,size=32M",
-    "/var/lib/grommunio-admin-api:rw,size=16M",
-    "/var/spool/exim4:rw,size=32M",
-    "/var/log:rw,size=64M",
+]
+
+# Persistent paths are anonymous volumes (removed with the container) so Docker copies the image's
+# initial content in, as it does for the compose named volumes; e.g. gromox needs queue/mess.
+PERSISTENT = [
+    "/var/lib/gromox",
+    "/var/lib/rspamd",
+    "/var/lib/redis",
+    "/var/lib/grommunio-admin-api",
+    "/var/lib/grommunio-admin-common",
+    "/var/spool/exim4",
+    "/var/log",
 ]
 
 StartupResult = namedtuple("StartupResult", "exit_code output")
@@ -92,11 +98,54 @@ class ScratchDatabase:
         return int(res.stdout.split()[-1])
 
 
+class SocketDatabase:
+    """A MariaDB reachable only through a Unix socket in a shared volume (no network)."""
+
+    IMAGE = "mariadb:11.4"
+
+    def __init__(self):
+        suffix = secrets.token_hex(4)
+        self.volume = f"gtest-sock-{suffix}"
+        self.name = f"gtest-maria-{suffix}"
+        self.db = "grommunio"
+        self.user = "grommunio"
+        self.password = secrets.token_urlsafe(18)
+
+    def mount(self, path: str) -> str:
+        return f"{self.volume}:{path}"
+
+    def _logs(self) -> str:
+        res = _docker("logs", self.name)
+        return res.stdout + res.stderr
+
+    def __enter__(self):
+        _docker("volume", "create", self.volume)
+        res = _docker(
+            "run", "-d", "--name", self.name, "--network", "none", "-v", self.mount("/run/mysqld"),
+            "-e", "MARIADB_RANDOM_ROOT_PASSWORD=1", "-e", f"MARIADB_DATABASE={self.db}",
+            "-e", f"MARIADB_USER={self.user}", "-e", f"MARIADB_PASSWORD={self.password}", self.IMAGE,
+        )
+        if res.returncode != 0:
+            self.__exit__()
+            raise RuntimeError(f"Could not start the socket MariaDB: {res.stderr}")
+        # The entrypoint runs a temporary server for initialisation, then the real one: two ready messages.
+        if not wait_until(lambda: self._logs().count("ready for connections") >= 2, 120, 1.0):
+            logs = self._logs()
+            self.__exit__()
+            raise RuntimeError(f"Socket MariaDB did not become ready:\n{logs[-800:]}")
+        return self
+
+    def __exit__(self, *exc):
+        _docker("rm", "-fv", self.name)
+        _docker("volume", "rm", "-f", self.volume)
+
+
 class Container:
     """One detached run of the image; always removed on exit."""
 
-    def __init__(self, env=None, scratch=None):
+    def __init__(self, env=None, scratch=None, volumes=()):
         self.name = f"grommunio-t-{secrets.token_hex(4)}"
+        self.volumes = list(volumes)
         base = {"LDAP_ENABLED": "false"}
         if scratch is not None:
             base.update(DB_NAME=scratch.name, DB_USER=scratch.user, DB_PASSWORD=scratch.password)
@@ -117,6 +166,8 @@ class Container:
                "--security-opt", "no-new-privileges:true"]
         for mount in TMPFS:
             cmd += ["--tmpfs", mount]
+        for volume in PERSISTENT + self.volumes:
+            cmd += ["-v", volume]
         for key, value in self.env.items():
             cmd += ["-e", f"{key}={value}"]
         cmd.append(load_env_secret("IMAGE_NAME", "grommunio:local"))
@@ -142,6 +193,11 @@ class Container:
 
     def wait_for_log(self, text: str, timeout=60.0) -> bool:
         return bool(wait_until(lambda: text in self.logs(), timeout, 1.0))
+
+    def wait_healthy(self, timeout=240.0) -> bool:
+        """Polls the image's own healthcheck until every service is RUNNING and the HTTP probes answer."""
+        return bool(wait_until(lambda: self.exec("/usr/local/bin/container-healthcheck.sh").returncode == 0,
+                               timeout, 3.0))
 
     def stop(self, grace=30):
         """Sends SIGTERM via docker stop and returns the exit code."""
