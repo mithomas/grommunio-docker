@@ -148,7 +148,7 @@ jobs:
             DB_PASSWORD 'p@$$w0rd\'\''#\";-n\w' \
             ADMIN_PASSWORD 'p@$$w0rd\'\''#\";-n\w' \
             RSPAMD_PASSWORD 'p@$$w0rd\'\''#\";-n\w' \
-            LDAP_BIND_PASS 'p@$$w0rd-ldap-secure' > .env.secrets
+            LDAP_BIND_PASS 'SecureLdapPass123' > .env.secrets
 
       - name: Start services with docker compose
         run: |
@@ -172,6 +172,23 @@ jobs:
           if [ $timeout -le 0 ]; then
             echo "::error::Grommunio container failed to become healthy within timeout."
             docker compose --profile test logs
+            exit 1
+          fi
+
+          echo "Awaiting OpenLDAP readiness..."
+          ldap_timeout=60
+          while [ $ldap_timeout -gt 0 ]; do
+            if docker compose --profile test exec -T openldap ldapsearch -x -H ldap://localhost:389 -b dc=example,dc=com >/dev/null 2>&1; then
+              echo "OpenLDAP is ready and serving queries!"
+              break
+            fi
+            sleep 2
+            ldap_timeout=$((ldap_timeout - 2))
+          done
+
+          if [ $ldap_timeout -le 0 ]; then
+            echo "::error::OpenLDAP failed to become ready within timeout."
+            docker compose --profile test logs openldap
             exit 1
           fi
 
