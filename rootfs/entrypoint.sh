@@ -45,6 +45,7 @@ done <<< "${DEFAULTS_TABLE}"
 export RSPAMD_PASSWORD="${RSPAMD_PASSWORD:-rspamd_secret}"
 export TIMEZONE="${TIMEZONE:-UTC}"
 export BAYES_SYNC_INTERVAL="${BAYES_SYNC_INTERVAL:-300}"
+export LOGROTATE_INTERVAL="${LOGROTATE_INTERVAL:-3600}"
 export LDAP_ENABLED="${LDAP_ENABLED:-true}"
 
 if [ "${LDAP_ENABLED}" = "true" ]; then
@@ -205,10 +206,19 @@ echo "==> Acquired schema advisory lock."
 
 # 6. Check database table count strictly within DB_NAME
 echo "==> Checking database table count for '${DB_NAME}'..."
-TABLE_COUNT_RAW=$(db -sN -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE();" 2>&1 || true)
+TABLE_ERR_FILE=$(mktemp)
+TABLE_COUNT_RAW=""
+if ! TABLE_COUNT_RAW=$(db -sN -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE();" 2>"${TABLE_ERR_FILE}"); then
+    echo "ERROR: Failed to query table count from database '${DB_NAME}'." >&2
+    echo "MariaDB error: $(cat "${TABLE_ERR_FILE}")" >&2
+    rm -f "${TABLE_ERR_FILE}"
+    exit 1
+fi
+rm -f "${TABLE_ERR_FILE}"
+
 TABLE_COUNT=$(echo "${TABLE_COUNT_RAW}" | tr -d '[:space:]')
 if ! [[ "${TABLE_COUNT}" =~ ^[0-9]+$ ]]; then
-    echo "ERROR: Failed to query table count from database '${DB_NAME}': '${TABLE_COUNT_RAW}'" >&2
+    echo "ERROR: Invalid table count returned for database '${DB_NAME}': '${TABLE_COUNT_RAW}'" >&2
     exit 1
 fi
 

@@ -42,14 +42,18 @@ def test_static_bayes_contracts():
     assert "mode=ro" in py_content, "FAIL: grommunio-bayes-sync.py missing mode=ro in ATTACH DATABASE"
     assert "uri=True" in py_content, "FAIL: grommunio-bayes-sync.py missing uri=True in sqlite3.connect"
 
-    loop_script = os.path.join(root_dir, "rootfs", "usr", "local", "bin", "grommunio-bayes-sync-loop.sh")
+    loop_script = os.path.join(root_dir, "rootfs", "usr", "local", "bin", "grommunio-loop.sh")
     with open(loop_script, "r", encoding="utf-8") as f:
         loop_content = f.read()
-    assert "trap" in loop_content and "SIGTERM" in loop_content, (
-        "FAIL: grommunio-bayes-sync-loop.sh missing SIGTERM trap"
+    assert "trap" in loop_content and "TERM" in loop_content, (
+        "FAIL: grommunio-loop.sh missing TERM trap"
     )
-    assert "grommunio-bayes-sync.py" in loop_content, (
-        "FAIL: grommunio-bayes-sync-loop.sh does not invoke Python engine"
+
+    supervisord_conf = os.path.join(root_dir, "rootfs", "etc", "supervisor", "supervisord.conf")
+    with open(supervisord_conf, "r", encoding="utf-8") as f:
+        sup_content = f.read()
+    assert "grommunio-loop.sh" in sup_content and "grommunio-bayes-sync.py" in sup_content, (
+        "FAIL: supervisord.conf does not invoke Python engine via grommunio-loop.sh"
     )
 
     print("    [+] Static Bayes synchronization contracts verified.")

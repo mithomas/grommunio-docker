@@ -55,8 +55,8 @@ def test_static_log_retention_contracts():
     assert "[program:grommunio-logrotate]" in supervisord_conf, (
         "FAIL: supervisord.conf missing grommunio-logrotate program"
     )
-    assert "grommunio-logrotate-loop.sh" in supervisord_conf, (
-        "FAIL: supervisord.conf missing loop script invocation"
+    assert "grommunio-loop.sh" in supervisord_conf, (
+        "FAIL: supervisord.conf missing grommunio-loop.sh invocation"
     )
 
     # 4. Docker Compose logging caps
