@@ -137,6 +137,13 @@ jobs:
           cp -f .env.secrets.example .env.secrets
           echo "IMAGE_NAME=grommunio-ci:local" >> .env
           echo "ENFORCE_SECURE_PASSWORDS=false" >> .env
+          # Test with decoupled non-default host ports to verify port mapping decoupling
+          echo "HTTP_PORT=18080" >> .env
+          echo "ADMIN_PORT=18081" >> .env
+          echo "RSPAMD_PORT=11338" >> .env
+          echo "SMTP_PORT=12525" >> .env
+          echo "DB_PORT=13306" >> .env
+          echo "LDAP_PORT=10389" >> .env
 
       - name: Start services with docker compose
         run: |
