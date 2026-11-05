@@ -15,7 +15,7 @@ import types
 from datetime import datetime
 from unittest import mock
 
-from env_helper import ROOT_DIR
+from env_helper import ROOT_DIR, container_exec
 
 FILE_LOGS_PATH = os.path.join(ROOT_DIR, "rootfs", "usr", "share", "grommunio-admin-api", "tools", "file_logs.py")
 
@@ -134,12 +134,7 @@ if d_res.returncode != 0:
 
 print("OK_CONTAINER_LOGROTATE")
 '''
-    res = subprocess.run(
-        ["docker", "exec", "-i", "grommunio", "python3", "-c", check_script],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
+    res = container_exec("python3", "-", input=check_script, timeout=30)
     if res.returncode != 0:
         print(f"    [-] In-container logrotate check failed:\n{res.stderr or res.stdout}", file=sys.stderr)
         return False

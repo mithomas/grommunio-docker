@@ -8,11 +8,10 @@ Validates HTTP responses, status codes, and Content-Types across all container p
 """
 import json
 import sys
-import time
 import urllib.error
 import urllib.request
 
-from env_helper import get_admin_port, get_http_port, get_rspamd_port
+from env_helper import get_admin_port, get_http_port, get_rspamd_port, wait_until
 
 
 def get_endpoints():
@@ -74,37 +73,29 @@ def check_endpoints():
         ct_expected = ep["content_type_contains"]
         req = urllib.request.Request(url, headers={"User-Agent": "GrommunioTest/1.0"})
 
-        status = None
-        headers = {}
-        body = b""
         last_error = None
 
-        for attempt in range(5):
+        def fetch():
+            nonlocal last_error
             try:
                 with urllib.request.urlopen(req) as resp:
-                    status = resp.status
-                    headers = resp.headers
-                    body = resp.read()
-                    break
+                    return resp.status, resp.headers, resp.read()
             except urllib.error.HTTPError as err:
-                status = err.code
-                headers = err.headers
-                body = err.read()
-                if status in (502, 503) and attempt < 4:
-                    time.sleep(1)
-                    continue
-                break
+                if err.code in (502, 503):
+                    last_error = err
+                    return None
+                return err.code, err.headers, err.read()
             except Exception as ex:
                 last_error = ex
-                if attempt < 4:
-                    time.sleep(1)
-                    continue
-                break
+                return None
 
-        if status is None:
+        result = wait_until(fetch, timeout=5, interval=1)
+        if result is None:
             print(f"    [-] {name:<30}: Connection error -> {last_error}", file=sys.stderr)
             all_ok = False
             continue
+
+        status, headers, body = result
 
         ct_actual = headers.get("Content-Type", "")
         code_match = (status == expected_code)
