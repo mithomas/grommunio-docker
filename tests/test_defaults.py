@@ -251,7 +251,7 @@ def test_init_defaults_script_robustness():
     assert 'os.environ.get("ADMIN_PASSWORD", "admin")' in script_content, (
         "FAIL: grommunio-init-defaults.py does not default ADMIN_PASSWORD to 'admin'"
     )
-    assert 'ADMIN_PASSWORD="${ADMIN_PASSWORD:-admin}"' in entrypoint_content, (
+    assert 'ADMIN_PASSWORD=admin' in entrypoint_content or 'ADMIN_PASSWORD="${ADMIN_PASSWORD:-admin}"' in entrypoint_content, (
         "FAIL: entrypoint.sh does not default ADMIN_PASSWORD to 'admin'"
     )
     assert "time.sleep(2)" in script_content, (

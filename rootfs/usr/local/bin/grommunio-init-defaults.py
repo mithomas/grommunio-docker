@@ -22,10 +22,35 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+QUOTA_MULTIPLIERS = {
+    "": 1, "k": 1, "kb": 1, "kib": 1,
+    "m": 1024, "mb": 1024, "mib": 1024,
+    "g": 1024 * 1024, "gb": 1024 * 1024, "gib": 1024 * 1024,
+    "t": 1024 * 1024 * 1024, "tb": 1024 * 1024 * 1024, "tib": 1024 * 1024 * 1024,
+}
 
-def str2bool(val, default=False):
+DEFAULTS_SPEC = [
+    ("lang", "DEFAULT_USER_LANG", "de_DE", str),
+    ("privWeb", "DEFAULT_USER_PRIV_WEB", "true", lambda v: str2bool(v)),
+    ("privEas", "DEFAULT_USER_PRIV_EAS", "true", lambda v: str2bool(v)),
+    ("privDav", "DEFAULT_USER_PRIV_DAV", "false", lambda v: str2bool(v)),
+    ("smtp", "DEFAULT_USER_PRIV_SMTP", "false", lambda v: str2bool(v)),
+    ("pop3_imap", "DEFAULT_USER_PRIV_POP3_IMAP", "false", lambda v: str2bool(v)),
+    ("changePassword", "DEFAULT_USER_PRIV_CHANGE_PASSWORD", "false", lambda v: str2bool(v)),
+    ("privChat", "DEFAULT_USER_PRIV_CHAT", "false", lambda v: str2bool(v)),
+    ("privVideo", "DEFAULT_USER_PRIV_MEET", "false", lambda v: str2bool(v)),
+    ("privFiles", "DEFAULT_USER_PRIV_FILES", "false", lambda v: str2bool(v)),
+    ("privArchive", "DEFAULT_USER_PRIV_ARCHIVE", "false", lambda v: str2bool(v)),
+    ("chat", "DEFAULT_USER_CREATE_CHAT_USER", "false", lambda v: str2bool(v)),
+    ("storagequotalimit", "DEFAULT_USER_STORAGE_QUOTA", "0", lambda v: parse_quota(v)),
+    ("prohibitsendquota", "DEFAULT_USER_SEND_QUOTA", "0", lambda v: parse_quota(v)),
+    ("prohibitreceivequota", "DEFAULT_USER_RECEIVE_QUOTA", "0", lambda v: parse_quota(v)),
+]
+
+
+def str2bool(val):
     if val is None:
-        return default
+        return False
     return str(val).strip().lower() in ("true", "1", "yes", "on")
 
 
@@ -57,42 +82,38 @@ def parse_quota(val):
     if num < 0:
         raise ValueError(f"Quota value cannot be negative: '{val}'")
 
-    if unit in ("g", "gb", "gib"):
-        return int(num * 1024 * 1024)
-    elif unit in ("m", "mb", "mib"):
-        return int(num * 1024)
-    elif unit in ("k", "kb", "kib", ""):
-        return int(num)
-    elif unit in ("t", "tb", "tib"):
-        return int(num * 1024 * 1024 * 1024)
-    else:
+    if unit not in QUOTA_MULTIPLIERS:
         raise ValueError(f"Unknown quota unit '{unit}' in '{val}'. Supported units: B, KiB/KB, MiB/MB, GiB/GB, TiB/TB")
+
+    return int(num * QUOTA_MULTIPLIERS[unit])
+
+
+def api_request(api_base, method, path, data=None, headers=None):
+    url = f"{api_base}{path}"
+    h = headers.copy() if headers else {}
+    body = None
+    if data is not None:
+        if isinstance(data, dict) and h.get("Content-Type") == "application/x-www-form-urlencoded":
+            body = urllib.parse.urlencode(data).encode()
+        else:
+            body = json.dumps(data).encode()
+            h.setdefault("Content-Type", "application/json")
+    req = urllib.request.Request(url, data=body, headers=h, method=method)
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        content = resp.read().decode()
+        return json.loads(content) if content else {}
 
 
 def main():
-    lang = os.environ.get("DEFAULT_USER_LANG", "de_DE")
-    priv_web = str2bool(os.environ.get("DEFAULT_USER_PRIV_WEB", "true"), True)
-    priv_eas = str2bool(os.environ.get("DEFAULT_USER_PRIV_EAS", "true"), True)
-    priv_dav = str2bool(os.environ.get("DEFAULT_USER_PRIV_DAV", "false"), False)
-    priv_smtp = str2bool(os.environ.get("DEFAULT_USER_PRIV_SMTP", "false"), False)
-    priv_pop3_imap = str2bool(os.environ.get("DEFAULT_USER_PRIV_POP3_IMAP", "false"), False)
-    priv_chg_passwd = str2bool(os.environ.get("DEFAULT_USER_PRIV_CHANGE_PASSWORD", "false"), False)
-    priv_chat = str2bool(os.environ.get("DEFAULT_USER_PRIV_CHAT", "false"), False)
-    priv_meet = str2bool(os.environ.get("DEFAULT_USER_PRIV_MEET", "false"), False)
-    priv_files = str2bool(os.environ.get("DEFAULT_USER_PRIV_FILES", "false"), False)
-    priv_archive = str2bool(os.environ.get("DEFAULT_USER_PRIV_ARCHIVE", "false"), False)
-    chat_user = str2bool(os.environ.get("DEFAULT_USER_CREATE_CHAT_USER", "false"), False)
-
-    try:
-        storage_quota = parse_quota(os.environ.get("DEFAULT_USER_STORAGE_QUOTA", "0"))
-        send_quota = parse_quota(os.environ.get("DEFAULT_USER_SEND_QUOTA", "0"))
-        receive_quota = parse_quota(os.environ.get("DEFAULT_USER_RECEIVE_QUOTA", "0"))
-    except ValueError as exc:
-        print(f"[init-defaults] ERROR: {exc}", file=sys.stderr)
-        return 1
+    desired = {}
+    for key, env_var, default_val, parser in DEFAULTS_SPEC:
+        try:
+            desired[key] = parser(os.environ.get(env_var, default_val))
+        except ValueError as exc:
+            print(f"[init-defaults] ERROR: {exc}", file=sys.stderr)
+            return 1
 
     admin_pw = os.environ.get("ADMIN_PASSWORD", "admin")
-    # Admin API listens on fixed internal port 8081 in the container namespace
     api_base = "http://127.0.0.1:8081/api/v1"
 
     # Step 1: Wait for Admin API to become reachable
@@ -104,18 +125,15 @@ def main():
     print(f"[init-defaults] Connecting to Grommunio Admin API at {api_base}...")
     while time.time() - start_time < max_wait:
         try:
-            login_data = urllib.parse.urlencode({"user": "admin", "pass": admin_pw}).encode()
-            req = urllib.request.Request(
-                f"{api_base}/login",
-                data=login_data,
+            auth_data = api_request(
+                api_base, "POST", "/login",
+                data={"user": "admin", "pass": admin_pw},
                 headers={"Content-Type": "application/x-www-form-urlencoded"}
             )
-            with urllib.request.urlopen(req, timeout=3) as resp:
-                auth_data = json.loads(resp.read().decode())
-                token = auth_data.get("grommunioAuthJwt")
-                csrf = auth_data.get("csrf")
-                if token and csrf:
-                    break
+            token = auth_data.get("grommunioAuthJwt")
+            csrf = auth_data.get("csrf")
+            if token and csrf:
+                break
         except Exception:
             pass
         time.sleep(2)
@@ -129,39 +147,16 @@ def main():
     # Step 2: Fetch current defaults
     current_data = {}
     try:
-        req_get = urllib.request.Request(
-            f"{api_base}/defaults/createParams",
+        resp = api_request(
+            api_base, "GET", "/defaults/createParams",
             headers={"Cookie": f"grommunioAuthJwt={token}"}
         )
-        with urllib.request.urlopen(req_get, timeout=5) as resp:
-            existing_resp = json.loads(resp.read().decode())
-            current_data = existing_resp.get("data", {})
+        current_data = resp.get("data", {})
     except Exception as ex:
         print(f"[init-defaults] Notice: Could not read existing defaults ({ex}), initializing fresh.", file=sys.stderr)
 
     user_defaults = current_data.get("user", {})
-
-    # Check if target values match existing settings
-    desired = {
-        "lang": lang,
-        "privWeb": priv_web,
-        "privEas": priv_eas,
-        "privDav": priv_dav,
-        "smtp": priv_smtp,
-        "pop3_imap": priv_pop3_imap,
-        "changePassword": priv_chg_passwd,
-        "privChat": priv_chat,
-        "privVideo": priv_meet,
-        "privFiles": priv_files,
-        "privArchive": priv_archive,
-        "chat": chat_user,
-        "storagequotalimit": storage_quota,
-        "prohibitsendquota": send_quota,
-        "prohibitreceivequota": receive_quota,
-    }
-
-    already_matches = all(user_defaults.get(k) == v for k, v in desired.items())
-    if already_matches:
+    if all(user_defaults.get(k) == v for k, v in desired.items()):
         print("[init-defaults] Defaults are already configured with desired parameters. No changes needed.")
         return 0
 
@@ -172,27 +167,19 @@ def main():
         "domain": current_data.get("domain", {})
     }
 
-    req_put = urllib.request.Request(
-        f"{api_base}/defaults/createParams",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Content-Type": "application/json",
-            "Cookie": f"grommunioAuthJwt={token}",
-            "X-Csrf-Token": csrf
-        },
-        method="PUT"
-    )
-
     try:
-        with urllib.request.urlopen(req_put, timeout=5) as resp:
-            print(f"[init-defaults] Successfully configured defaults:")
-            print(f"    - Language: {lang}")
-            print(f"    - Web: {priv_web}, EAS: {priv_eas}, DAV: {priv_dav}")
-            print(f"    - SMTP: {priv_smtp}, POP3/IMAP: {priv_pop3_imap}, ChangePassword: {priv_chg_passwd}")
-            print(f"    - Chat: {priv_chat}, Meet: {priv_meet}, Files: {priv_files}, Archive: {priv_archive}")
-            print(f"    - Chat user: {chat_user}")
-            print(f"    - Quotas: storage={storage_quota}, send={send_quota}, receive={receive_quota}")
-            return 0
+        api_request(
+            api_base, "PUT", "/defaults/createParams",
+            data=payload,
+            headers={
+                "Cookie": f"grommunioAuthJwt={token}",
+                "X-Csrf-Token": csrf
+            }
+        )
+        print("[init-defaults] Successfully configured defaults:")
+        for k, v in desired.items():
+            print(f"    - {k}: {v}")
+        return 0
     except urllib.error.HTTPError as ex:
         err_msg = ex.read().decode()
         print(f"[init-defaults] Error updating defaults (HTTP {ex.code}): {err_msg}", file=sys.stderr)
