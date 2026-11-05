@@ -362,7 +362,7 @@ A standalone test suite validating all container services, endpoints, credential
 | **`tests/test_webmail_security.py`** | Validates root Webmail delivery, secure cookies, static assets, and logon/Origin handling. |
 | **`tests/test_admin_auth.py`** | Verifies Admin API authentication, JWT issuance, protected endpoints, and rejection of missing or forged tokens. |
 | **`tests/test_rspamd_auth.py`** | Verifies password protection on dedicated Rspamd dashboard (`:11334`). |
-| **`tests/test_mail_pipeline.py`** | End-to-end SMTP injection (`:2525`) -> Rspamd (`:11333`) -> LMTP (`:24`) -> Spam History. |
+| **`tests/test_mail_pipeline.py`** | End-to-end SMTP injection (`:2525`) -> Rspamd (`:11333`) -> LMTP (`:24`) -> mailbox and Spam History; GTUBE spam is rejected. |
 | **`tests/test_live_status.py`** | Validates Admin UI Live Status (`:8081`), VTS telemetry, and hop-by-hop sanitization. |
 | **`tests/test_monitoring_logs.py`** | Validates Admin UI Monitoring logs (`:8081`), file readers, and Exim log replacement. |
 | **`tests/test_defaults.py`** | Validates Admin UI mailbox creation defaults (`:8081`), language, protocols, and quotas. |

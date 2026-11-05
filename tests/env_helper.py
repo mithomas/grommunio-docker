@@ -172,9 +172,10 @@ def container_exec(*args, input=None, timeout=60) -> subprocess.CompletedProcess
     )
 
 
-def send_mail(rcpt: str, label: str = "Verification", body: str = "Automated verification message.") -> str:
-    """Injects a message via host-mapped SMTP and returns its unique subject."""
-    subject = f"{label}-{uuid.uuid4().hex[:12]}"
+def send_mail(rcpt: str, label: str = "Verification", body: str = "Automated verification message.",
+              subject: str = None) -> str:
+    """Injects a message via host-mapped SMTP and returns its unique subject (SMTP rejections propagate)."""
+    subject = subject or f"{label}-{uuid.uuid4().hex[:12]}"
     sender = f"verifier-{subject}@external.example"
     msg = MIMEText(body)
     msg["Subject"], msg["From"], msg["To"] = subject, sender, rcpt

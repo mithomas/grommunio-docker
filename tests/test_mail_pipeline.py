@@ -1,94 +1,90 @@
 #!/usr/bin/env python3
 """
-Verification Test 5: End-to-End Mail Pipeline & Spam History
-1. Sends a test message via SMTP to container Exim on port 2525.
-2. Confirms Exim accepts the message for local delivery (250 OK).
-3. Verifies that container Exim passes message through Rspamd.
-4. Authenticates to Admin API and verifies the message appears in the
-   Admin Console's Spam History endpoint (/api/v1/system/antispam/history).
+Verification Test: End-to-End Mail Pipeline & Spam History
+1. A clean message sent to Exim (:2525) is scanned by Rspamd, delivered via LMTP into the mailbox,
+   and recorded in the Admin Console Spam History with the right sender and recipient.
+2. A GTUBE spam message is rejected during SMTP DATA, never reaches the mailbox,
+   and increments Rspamd's 'reject' action counter (hard rejects are not stored in Spam History).
 """
-import smtplib
-from email.mime.text import MIMEText
-import urllib.request
-import urllib.parse
 import json
-import gzip
-import time
-import os
+import smtplib
 import sys
+import urllib.request
+import uuid
 
-from env_helper import admin_session, get_admin_port, get_bind_ip, get_smtp_port
+from env_helper import (admin_session, api, ensure_testuser, get_rspamd_port, load_env_secret,
+                        mailbox_contains, send_mail, wait_until)
+
+GTUBE = "XJS*C4JDBQADN1.NSBN3*2IDNEN*GTUBE-STANDARD-ANTI-UBE-TEST-EMAIL*C.34X"
+
+
+def rspamd_rejects():
+    req = urllib.request.Request(
+        f"http://localhost:{get_rspamd_port()}/stat",
+        headers={"Password": load_env_secret("RSPAMD_PASSWORD", "rspamd_secret")},
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        return json.load(resp)["actions"]["reject"]
+
+
+def history_row(session, subject):
+    _, body = api("GET", "/system/antispam/history", session=session)
+    rows = (body or {}).get("rows", [])
+    return next((row for row in rows if row.get("subject") == subject), None)
+
 
 def check_mail_pipeline():
-    smtp_port = get_smtp_port()
-    admin_port = get_admin_port()
-    bind_ip = get_bind_ip()
-    print("==> [5/5] Checking Mail Pipeline & Spam History population...")
-    timestamp = int(time.time())
-    subject = f"Verification Test Email - {timestamp}"
-
-    # Step 1: Send email via SMTP to container Exim on host-mapped port
-    msg = MIMEText(f"This is an automated verification email sent at {timestamp} to test Rspamd scanning and Spam History logging.")
-    msg["Subject"] = subject
-    msg["From"] = f"verifier-{timestamp}@external.example"
-    msg["To"] = "test@example.com"
-
+    print("==> Checking Mail Pipeline & Spam History...")
+    rcpt = ensure_testuser()
     try:
-        with smtplib.SMTP(bind_ip, smtp_port, timeout=10) as client:
-            code, resp = client.ehlo()
-            if code != 250:
-                print(f"    [-] EHLO to port {smtp_port} failed: {code} {resp}", file=sys.stderr)
-                return False
-            client.sendmail(msg["From"], [msg["To"]], msg.as_string())
-            print(f"    [+] Injected test message into container Exim on port {smtp_port}.")
-    except Exception as ex:
-        print(f"    [-] SMTP delivery to port {smtp_port} failed: {ex}", file=sys.stderr)
-        return False
-
-    # Allow a moment for Exim to scan and deliver
-    time.sleep(1.5)
-
-    # Step 2: Authenticate to Admin API
-    try:
-        token = admin_session().token
+        session = admin_session()
     except RuntimeError as ex:
-        print(f"    [-] Admin login failed during pipeline test: {ex}", file=sys.stderr)
+        print(f"    [-] {ex}", file=sys.stderr)
         return False
 
-    # Step 3: Fetch Spam History from Admin API
-    hist_url = f"http://localhost:{admin_port}/api/v1/system/antispam/history"
+    # Clean message: accepted, delivered, scanned
+    subject = send_mail(rcpt, "Pipeline")
+    if not wait_until(lambda: mailbox_contains(rcpt, subject), 30):
+        print(f"    [-] Clean message '{subject}' was not delivered to {rcpt}.", file=sys.stderr)
+        return False
+    print("    [+] Clean message delivered through Exim -> Rspamd -> LMTP into the mailbox.")
+
+    row = wait_until(lambda: history_row(session, subject), 15)
+    if not row:
+        print(f"    [-] No Spam History entry for '{subject}'.", file=sys.stderr)
+        return False
+    if row.get("action") == "reject" or row.get("rcpt_smtp") != [rcpt] or not row.get("sender_smtp", "").startswith("verifier-"):
+        print(f"    [-] Unexpected Spam History entry for the clean message: {row}", file=sys.stderr)
+        return False
+    print(f"    [+] Spam History records the clean message (action={row['action']}, score={row['score']}).")
+
+    # GTUBE: rejected at DATA, never delivered
+    spam_subject = f"Gtube-{uuid.uuid4().hex[:12]}"
+    rejects_before = rspamd_rejects()
     try:
-        req_hist = urllib.request.Request(
-            hist_url,
-            headers={"Cookie": f"grommunioAuthJwt={token}"}
-        )
-        with urllib.request.urlopen(req_hist) as resp:
-            raw = resp.read()
-            if raw.startswith(b"\x1f\x8b"):
-                body = gzip.decompress(raw).decode("utf-8")
-            else:
-                body = raw.decode("utf-8")
-            history = json.loads(body)
-    except Exception as ex:
-        print(f"    [-] Failed to retrieve Spam History: {ex}", file=sys.stderr)
+        send_mail(rcpt, subject=spam_subject, body=f"GTUBE test message\n{GTUBE}\n")
+    except smtplib.SMTPDataError as err:
+        if err.smtp_code != 550:
+            print(f"    [-] Spam rejected with SMTP {err.smtp_code}, expected 550: {err.smtp_error!r}", file=sys.stderr)
+            return False
+        print(f"    [+] GTUBE message rejected during DATA ({err.smtp_code} {err.smtp_error.decode(errors='replace')}).")
+    else:
+        print("    [-] GTUBE message was accepted by Exim.", file=sys.stderr)
         return False
 
-    # Step 4: Verify recent scan log contains our message
-    rows = history.get("rows", history) if isinstance(history, dict) else history
-    print(f"    [+] Spam History retrieved ({len(rows)} total records in ring buffer).")
-
-    if not rows:
-        print("    [-] History table is empty.", file=sys.stderr)
+    if not wait_until(lambda: rspamd_rejects() == rejects_before + 1, 10):
+        print(f"    [-] Rspamd reject counter did not increase by one (was {rejects_before}).", file=sys.stderr)
         return False
-
-    latest = rows[0]
-    print(f"    [+] Latest scan recorded in Admin UI: Action={latest.get('action')}, Score={latest.get('score')}")
+    if mailbox_contains(rcpt, spam_subject):
+        print("    [-] Rejected spam message reached the mailbox.", file=sys.stderr)
+        return False
+    print("    [+] Rspamd counted exactly one reject and the message was not delivered.")
     return True
+
 
 if __name__ == "__main__":
     if check_mail_pipeline():
         print("[+] SUCCESS: Mail pipeline, Rspamd scanning, and Spam History confirmed.\n")
         sys.exit(0)
-    else:
-        print("[-] FAILED: Mail pipeline verification failed.\n", file=sys.stderr)
-        sys.exit(1)
+    print("[-] FAILED: Mail pipeline verification failed.\n", file=sys.stderr)
+    sys.exit(1)
