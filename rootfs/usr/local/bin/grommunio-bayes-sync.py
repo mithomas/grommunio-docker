@@ -19,7 +19,7 @@ import sqlite3
 import subprocess
 import sys
 
-logging.basicConfig(level=logging.INFO, format="%(message)s")
+logging.basicConfig(level=logging.INFO, format="[bayes-sync] %(message)s")
 logger = logging.getLogger("bayes-sync")
 
 STATE_DB = os.environ.get("BAYES_STATE_DB", "/var/lib/rspamd/bayes_learned.sqlite3")
@@ -58,7 +58,7 @@ def learn_message(learn_type, eml_file, username, msg_id):
                 with open(eml_file, "rb") as f_eml:
                     data = f_eml.read()
             except OSError as exc:
-                logger.warning("[bayes-sync] Could not read %s: %s", eml_file, exc)
+                logger.warning("Could not read %s: %s", eml_file, exc)
                 return False
         else:
             exm_proc = subprocess.run(
@@ -68,7 +68,7 @@ def learn_message(learn_type, eml_file, username, msg_id):
             )
             if exm_proc.returncode != 0 or not exm_proc.stdout:
                 logger.warning(
-                    "[bayes-sync] gromox-exm2eml failed for %s msg %s (exit %s)",
+                    "gromox-exm2eml failed for %s msg %s (exit %s)",
                     username,
                     msg_id,
                     exm_proc.returncode,
@@ -82,7 +82,7 @@ def learn_message(learn_type, eml_file, username, msg_id):
         res = subprocess.run(cmd, input=data, capture_output=True, timeout=20)
         return res.returncode == 0
     except Exception as exc:
-        logger.warning("[bayes-sync] Error executing rspamc for %s msg %s: %s", username, msg_id, exc)
+        logger.warning("Error executing rspamc for %s msg %s: %s", username, msg_id, exc)
         return False
 
 
@@ -95,14 +95,13 @@ def sync_mailbox(conn, user_db):
         escaped_db = os.path.abspath(user_db).replace("'", "''")
         conn.execute(f"ATTACH DATABASE 'file:{escaped_db}?mode=ro' AS userdb")
     except sqlite3.OperationalError as exc:
-        logger.warning("[bayes-sync] Could not attach %s: %s", user_db, exc)
+        logger.warning("Could not attach %s: %s", user_db, exc)
         return
 
     try:
-        # ----------------------------------------------------------------------
-        # 1. Detect unlearned messages in Junk E-mail (parent_fid = 23)
-        # ----------------------------------------------------------------------
         cursor = conn.cursor()
+
+        # 1. Detect unlearned messages in Junk E-mail (parent_fid = 23)
         cursor.execute(f"""
             SELECT m.message_id, m.mid_string
             FROM userdb.messages m
@@ -123,11 +122,9 @@ def sync_mailbox(conn, user_db):
                     VALUES (?, ?, ?, 'spam', datetime('now'))
                 """, (username, msg_id, mid_str))
                 conn.commit()
-                logger.info("[bayes-sync] Learned SPAM for %s (msg %s)", username, msg_id)
+                logger.info("Learned SPAM for %s (msg %s)", username, msg_id)
 
-        # ----------------------------------------------------------------------
         # 2. Detect messages moved OUT of Junk E-mail or expunged
-        # ----------------------------------------------------------------------
         cursor.execute(f"""
             SELECT l.message_id, l.mid_string, m.parent_fid
             FROM learned_messages l
@@ -143,13 +140,11 @@ def sync_mailbox(conn, user_db):
                 continue
 
             if parent_fid is None or parent_fid == FOLDER_TRASH:
-                # Expunged or moved to Deleted Items / Trash (27): prune from learned state
                 conn.execute("""
                     DELETE FROM learned_messages WHERE username = ? AND message_id = ?
                 """, (username, msg_id))
                 conn.commit()
             else:
-                # Moved out of Junk to Inbox or another user folder: Learn as HAM
                 eml_file = os.path.join(mailbox_dir, "eml", mid_str or "")
                 if learn_message("ham", eml_file, username, msg_id):
                     conn.execute("""
@@ -157,7 +152,7 @@ def sync_mailbox(conn, user_db):
                         VALUES (?, ?, ?, 'ham', datetime('now'))
                     """, (username, msg_id, mid_str))
                     conn.commit()
-                    logger.info("[bayes-sync] Learned HAM for %s (msg %s moved to folder %s)", username, msg_id, parent_fid)
+                    logger.info("Learned HAM for %s (msg %s moved to folder %s)", username, msg_id, parent_fid)
 
     finally:
         try:
