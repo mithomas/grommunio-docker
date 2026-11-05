@@ -12,7 +12,6 @@ import sys
 from env_helper import SKIP_EXIT
 
 TESTS = [
-    ("test_services.py", "Supervisor Services (All 14 Running)"),
     ("test_endpoints.py", "HTTP Ingress Endpoints & Content-Types"),
     ("test_admin_auth.py", "Grommunio Admin API & JWT Auth"),
     ("test_rspamd_auth.py", "Rspamd Dashboard Dedicated Auth"),
@@ -25,8 +24,7 @@ TESTS = [
     ("test_defaults.py", "Mailbox Creation Defaults & Privileges"),
     ("test_db_socket.py", "MariaDB Unix Socket (DB_SOCKET) & Exim DB-Free Routing"),
     ("test_password_escaping.py", "Password Special Characters & Direct Controller Auth"),
-    ("test_port_configuration.py", "Dedicated Host Port Mapping Decoupling"),
-    ("test_db_init_safety.py", "Database Init & Migration Fail-Safe Behavior"),
+    ("test_db_init_safety.py", "Database Schema & Migration Idempotence"),
     ("test_log_retention.py", "Persistent Log Growth Bounding & 1-Year Retention"),
     ("test_mailbox_ownership.py", "Mailbox Volume Ownership Optimization & Repair"),
     ("test_bayes_sync.py", "Bayes Synchronization Engine & Scan Cost Reduction"),

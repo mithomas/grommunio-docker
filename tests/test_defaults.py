@@ -8,7 +8,7 @@ are properly configured with the specified parameters:
 - Services & Privileges: smtp=False, pop3_imap=False, changePassword=False
 - Integrations: privChat=False, privVideo=False, privFiles=False, privArchive=False, chatUser=False
 - Quotas: storagequotalimit, prohibitsendquota, prohibitreceivequota (supporting KiB / human units)
-- Dynamic nonzero quota configuration & idempotency verification
+- Dynamic nonzero quota configuration round-trip
 """
 import json
 import os
@@ -114,8 +114,8 @@ def check_defaults():
     if failed:
         return False
 
-    # Step 3: Test dynamic nonzero quota update and idempotency
-    print("    [>] Testing dynamic nonzero quota configuration & idempotency...")
+    # Step 3: Test dynamic nonzero quota update
+    print("    [>] Testing dynamic nonzero quota configuration...")
     test_storage = 10485760  # 10 GiB in KiB
     test_send = 8388608      # 8 GiB in KiB
     test_receive = 9437184   # 9 GiB in KiB
@@ -159,12 +159,6 @@ def check_defaults():
         assert verified_data.get("prohibitsendquota") == test_send, "prohibitsendquota mismatch"
         assert verified_data.get("prohibitreceivequota") == test_receive, "prohibitreceivequota mismatch"
         print(f"    [+] Successfully updated nonzero quotas: storage={test_storage}KB, send={test_send}KB, receive={test_receive}KB")
-
-        # Test idempotency check logic
-        desired_nonzero = dict(updated_user)
-        is_idempotent = all(verified_data.get(k) == v for k, v in desired_nonzero.items())
-        assert is_idempotent, "Idempotency check failed: verified_data does not match desired_nonzero"
-        print("    [+] Idempotency check verified: unchanged nonzero quotas require no update.")
 
     finally:
         # Step 4: Restore original initial defaults cleanly

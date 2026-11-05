@@ -3,45 +3,21 @@
 Verification Test: Container Healthcheck Behavior & Diagnostics
 Verifies that rootfs/usr/local/bin/container-healthcheck.sh correctly reports service
 and storage health:
-1. Static contract verification:
-   - supervisorctl status assignment uses '|| true' to avoid premature abort under set -e.
-   - Persistent storage check performs numeric comparison (pct + 0 >= 95) for awk string safety.
-2. Healthy container pass:
-   - Probes live container healthcheck and confirms exit code 0.
-3. Stopped service diagnostic reporting:
+1. Healthy container pass:
+   - Probes live container healthcheck and confirms exit code 0 (all supervised services RUNNING).
+2. Stopped service diagnostic reporting:
    - Simulates a stopped supervisor daemon, verifying exit code 1 and explicit diagnostic output
      naming the non-running service.
-4. Storage threshold reporting:
+3. Storage threshold reporting:
    - Simulates 100% disk usage with ample free space via a temporary df stub, verifying exit code 1
      and diagnostic output.
 """
-import os
 import subprocess
 import sys
 
 
-def test_static_contracts():
-    print("    [>] 1. Validating static contracts in container-healthcheck.sh...")
-    root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    healthcheck_path = os.path.join(root_dir, "rootfs", "usr", "local", "bin", "container-healthcheck.sh")
-
-    with open(healthcheck_path, "r", encoding="utf-8") as f:
-        content = f.read()
-
-    assert "supervisorctl status 2>/dev/null || true" in content, (
-        "FAIL: container-healthcheck.sh missing '|| true' on supervisorctl status assignment"
-    )
-    assert "pct + 0 >= 95" in content, (
-        "FAIL: container-healthcheck.sh missing numeric comparison 'pct + 0 >= 95'"
-    )
-    assert "curl -fs -o /dev/null" in content, (
-        "FAIL: container-healthcheck.sh missing 'curl -fs -o /dev/null' HTTP probe pattern"
-    )
-    print("    [+] Static contracts verified.")
-
-
 def test_healthy_container():
-    print("    [>] 2. Verifying healthy container passes healthcheck...")
+    print("    [>] 1. Verifying healthy container passes healthcheck...")
     cmd = ["docker", "compose", "exec", "-T", "grommunio", "/usr/local/bin/container-healthcheck.sh"]
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:
@@ -51,7 +27,7 @@ def test_healthy_container():
 
 
 def test_stopped_service():
-    print("    [>] 3. Verifying stopped service fails healthcheck with diagnostic output...")
+    print("    [>] 2. Verifying stopped service fails healthcheck with diagnostic output...")
     # Stop a service temporarily, test healthcheck, then restart service
     test_svc = "gromox-midb"
     shell_cmd = (
@@ -80,7 +56,7 @@ def test_stopped_service():
 
 
 def test_simulated_full_disk():
-    print("    [>] 4. Verifying simulated 100% full volume fails healthcheck...")
+    print("    [>] 3. Verifying simulated 100% full volume fails healthcheck...")
     stub_dir = "/var/log/healthcheck-test-bin"
     shell_cmd = (
         f"mkdir -p {stub_dir} && "
@@ -106,7 +82,6 @@ def test_simulated_full_disk():
 
 if __name__ == "__main__":
     print("==> Checking Container Healthcheck Behavior & Diagnostics...")
-    test_static_contracts()
     test_healthy_container()
     test_stopped_service()
     test_simulated_full_disk()

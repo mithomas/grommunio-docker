@@ -17,9 +17,8 @@ All functional verification checks performed during development are codified as 
 
 | Script | Test Scope | Verification Target |
 | :--- | :--- | :--- |
-| **`tests/test_services.py`** | Supervisor Process Monitoring | Verifies that all 14 background daemons inside the container report `RUNNING`. |
 | **`tests/test_endpoints.py`** | HTTP Ingress & Content-Types | Validates status codes, headers, and MIME types across Webmail (`:8080`), ActiveSync (`:8080`), Admin Web UI (`:8081`), `config.json` (`:8081`), Admin API status (`:8081`), and Rspamd Dashboard (`:11334`). |
-| **`tests/test_webmail_security.py`** | Webmail Root Ingress & Cookie Security | Validates Webmail delivery at root (`:8080`), absence of PHP configuration errors, `secure`/`HttpOnly` cookies, static assets, and runtime `session.cookie_secure = 1`. |
+| **`tests/test_webmail_security.py`** | Webmail Root Ingress & Cookie Security | Validates Webmail delivery at root (`:8080`), absence of PHP configuration errors, `secure`/`HttpOnly` cookies, static assets, and logon/Origin handling. |
 | **`tests/test_admin_auth.py`** | Admin API & JWT Authentication | Tests login credential validation, JWT token issuance, cookie handling, and access to protected administrative endpoints. |
 | **`tests/test_rspamd_auth.py`** | Rspamd Dedicated Authentication | Tests that unauthenticated requests to `:11334` are rejected and that valid authentication (`RSPAMD_PASSWORD`) grants access to Rspamd controller endpoints (`/auth`, `/stat`). |
 | **`tests/test_mail_pipeline.py`** | End-to-End Mail & Spam Pipeline | Injects an SMTP test email into container Exim (`:2525`), confirms Rspamd content scanning, verifies delivery to Gromox LMTP (`:24`), and asserts that the scan record is populated in the Admin UI **Spam History** API. |
@@ -29,13 +28,12 @@ All functional verification checks performed during development are codified as 
 | **`tests/test_ldap_config.py`** | Admin API LDAP Config & Persistence | Validates default group mapping population in `/system/mconf/ldap` and disk persistence without permission errors. |
 | **`tests/test_ldap.py`** | OpenLDAP & User Provisioning | Tests companion OpenLDAP (`:389`), Admin CLI connection (`ldap info`), user search, and user mailbox provisioning via `ldap downsync -c`. |
 | **`tests/test_db_socket.py`** | MariaDB Unix Socket & Exim Routing | Validates `DB_SOCKET` Unix socket connection handling and DB-free Exim primary/alias domain routing. |
-| **`tests/test_password_escaping.py`** | Password Special Characters & Direct Controller Auth | Validates safe handling of passwords with special characters ($, #, ', ", \, ;), PyYAML escaping, printf shell safety, and direct Rspamd controller connectivity. |
-| **`tests/test_port_configuration.py`** | Dedicated Host Port Mapping Decoupling | Validates typed port helper extraction, internal healthcheck and defaults decoupling from host port env variables, companion MariaDB container routing, and dynamic test suite resolution. |
-| **`tests/test_db_init_safety.py`** | Database Init & Migration Fail-Safe Behavior | Validates MariaDB advisory locking (GET_LOCK), separate EXIT/signal traps (exit 143), strict error-checked table counting, and fail-fast schema ops. |
-| **`tests/test_log_retention.py`** | Persistent Log Growth Bounding & 1-Year Retention | Validates weekly logrotate rules with 53 archives (371 days > 1 year), copytruncate write continuity, delaycompress Admin UI tail fallback, and low-disk healthcheck alerts. |
-| **`tests/test_mailbox_ownership.py`** | Mailbox Volume Ownership Optimization & Repair | Validates O(1) constant-time shallow ownership on /var/lib/gromox without recursive mailbox traversal, GROMOX_FIX_PERMISSIONS flag, and standalone repair script. |
+| **`tests/test_password_escaping.py`** | Password Special Characters & Direct Controller Auth | Validates safe handling of passwords with special characters ($, #, ', ", \, ;) in Rspamd hashing, default-credential gating, and direct Rspamd controller connectivity. |
+| **`tests/test_db_init_safety.py`** | Database Schema & Migration Idempotence | Validates the live database is populated and `gromox-dbop -U` re-runs cleanly. |
+| **`tests/test_log_retention.py`** | Log Rotation & Admin UI Tail Continuity | Validates the in-container logrotate dry run and the Admin UI `.1` rotated-log fallback. |
+| **`tests/test_mailbox_ownership.py`** | Mailbox Volume Permissions & Repair | Validates /var/lib/gromox permissions and the standalone `grommunio-fix-permissions.sh` repair script (shallow and recursive). |
 | **`tests/test_bayes_sync.py`** | Bayes Synchronization Engine & Scan Cost Reduction | Validates Python batched sync engine with SQLite ATTACH DATABASE, set-based differential queries, spam/ham/trash/expunge lifecycle transitions, retry resilience, and zero redundant process forks. |
-| **`tests/test_healthcheck.py`** | Container Healthcheck Diagnostics & Thresholds | Validates non-zero abort prevention on stopped services, explicit service diagnostics, and numeric comparison for storage capacity checks (including 100% full volumes). |
+| **`tests/test_healthcheck.py`** | Container Healthcheck Diagnostics & Thresholds | Validates a healthy container passes, a stopped service fails with an explicit diagnostic, and a 100% full volume is flagged. |
 
 ### Running the Test Suite
 
@@ -46,7 +44,6 @@ python3 tests/run_all.py
 
 Run an individual test directly:
 ```bash
-python3 tests/test_services.py
 python3 tests/test_endpoints.py
 python3 tests/test_webmail_security.py
 python3 tests/test_admin_auth.py
@@ -59,7 +56,6 @@ python3 tests/test_ldap_config.py
 python3 tests/test_ldap.py
 python3 tests/test_db_socket.py
 python3 tests/test_password_escaping.py
-python3 tests/test_port_configuration.py
 python3 tests/test_db_init_safety.py
 python3 tests/test_log_retention.py
 python3 tests/test_mailbox_ownership.py
@@ -111,7 +107,7 @@ python3 tests/test_healthcheck.py
    - The workflow `.github/workflows/build-and-publish.yml` executes on scheduled cron (`0 */6 * * *`), git push to `main`, tags (`v*`), pull requests, and manual `workflow_dispatch`.
    - **Docker Hub Overview Sync:** The workflow `.github/workflows/sync-dockerhub-readme.yml` automatically syncs `README.md` (along with the short description and completed GitHub URLs) to the Docker Hub repository overview whenever `README.md` is updated on `main` or triggered via `workflow_dispatch` (as well as during image publication in `build-and-publish.yml`). `README.md` must stay under Docker Hub's 25,000-byte limit.
    - **Upstream Change Detection:** Compares remote `debian:trixie-slim` digest and Grommunio Debian 13 repository packages SHA256 checksum against GitHub Actions cache, bypassing redundant builds when upstream dependencies have not changed.
-   - **Pre-Publication Gate:** Image builds for `linux/amd64` and starts the full test stack (`docker compose --profile test up -d`). Tests run via `python3 tests/run_all.py`. Publication to Docker Hub only proceeds if all 19 verification tests pass.
+   - **Pre-Publication Gate:** Image builds for `linux/amd64` and starts the full test stack (`docker compose --profile test up -d`). Tests run via `python3 tests/run_all.py`. Publication to Docker Hub only proceeds if all 17 verification tests pass.
    - **Image Tagging & OCI Labels:** Pushes `:latest`, `:<major>`, `:<minor>`, `:<patch>`, and `:<patch>-<timestamp>-<short-sha>` (e.g. `3.12.268-20261001-1339-<commit>`). Embeds OCI metadata labels (`org.opencontainers.image.*`) covering all core component versions (Gromox, Webmail, Z-Push, Admin API, Admin Web, Rspamd, Exim, Nginx, Redis, PHP, and Debian point release).
    - **Required Secrets:** `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`, and optional `DOCKERHUB_REPOSITORY` (defaults to `${DOCKERHUB_USERNAME}/grommunio-docker`).
 

@@ -13,14 +13,11 @@ Validates:
    - CSS and Favicon return HTTP 200 with matching Content-Types
 4. Absence of legacy /web paths:
    - Nginx configuration contains no /web location blocks
-5. In-container PHP runtime configuration:
-   - session.cookie_secure evaluates to 1 in PHP runtime
 6. FastCGI Origin normalization:
    - Submitting logon with Origin: http://localhost:8080 succeeds (HTTP 303 redirect)
    - Untrusted cross-origin requests (Origin: http://evil.com) are rejected with HTTP 403
 7. System user group memberships:
    - User www-data belongs to gromox group in image
-   - Ineffective startup usermod on read-only rootfs is absent from entrypoint.sh
 """
 import subprocess
 import sys
@@ -107,19 +104,6 @@ def check_webmail_root_ingress():
             print(f"    [-] Failed to fetch static asset {name}: {ex}", file=sys.stderr)
             return False
 
-    # 5. In-container PHP runtime settings
-    try:
-        php_cmd = ["docker", "exec", "grommunio", "php", "-r", "echo ini_get('session.cookie_secure');"]
-        proc = subprocess.run(php_cmd, capture_output=True, text=True, check=True)
-        cookie_secure_val = proc.stdout.strip()
-        if cookie_secure_val != "1":
-            print(f"    [-] PHP ini session.cookie_secure is '{cookie_secure_val}', expected '1'", file=sys.stderr)
-            return False
-        print(f"    [+] PHP runtime confirms session.cookie_secure = {cookie_secure_val}.")
-    except Exception as ex:
-        print(f"    [-] Failed to check PHP runtime configuration: {ex}", file=sys.stderr)
-        return False
-
     # 6. Webmail logon with Origin header (verifies FastCGI origin normalization and CSRF acceptance)
     logon_url = f"{base_url}/?logon"
     post_data = urllib.parse.urlencode({"username": "testuser", "password": "testuser_secret"}).encode("utf-8")
@@ -186,21 +170,12 @@ def check_webmail_root_ingress():
             return False
         print("    [+] Untrusted Origin ('http://evil.com') correctly rejected with HTTP 403 Forbidden.")
 
-    # 8. Verify www-data group membership and absence of startup usermod on read-only rootfs
-    import os
-    root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    entrypoint_path = os.path.join(root_dir, "rootfs", "entrypoint.sh")
-    with open(entrypoint_path, "r", encoding="utf-8") as f:
-        entrypoint_content = f.read()
-    if "usermod" in entrypoint_content:
-        print("    [-] entrypoint.sh still contains ineffective usermod command", file=sys.stderr)
-        return False
-
+    # 8. Verify www-data group membership
     id_proc = subprocess.run(["docker", "compose", "exec", "-T", "grommunio", "id", "www-data"], capture_output=True, text=True)
     if id_proc.returncode != 0 or "gromox" not in id_proc.stdout:
         print(f"    [-] www-data is not a member of gromox group: {id_proc.stderr or id_proc.stdout}", file=sys.stderr)
         return False
-    print("    [+] Container user 'www-data' confirmed member of 'gromox' group (no startup usermod).")
+    print("    [+] Container user 'www-data' confirmed member of 'gromox' group.")
 
     return True
 

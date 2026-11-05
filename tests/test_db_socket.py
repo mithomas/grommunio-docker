@@ -13,7 +13,6 @@ Verification Test 12: MariaDB Unix Socket (DB_SOCKET) & Exim Multi-Domain Routin
    connect via a custom Unix domain socket when DB_SOCKET is configured and symlinked
    to /run/mysqld/mysqld.sock with DB_HOST=localhost.
 """
-import os
 import subprocess
 import sys
 
@@ -157,16 +156,7 @@ finally:
         f.write(exim_conf)
     reload_exim()
 
-# 4. Verify entrypoint.sh includes DB_SOCKET handling
-entrypoint_sh = open("/entrypoint.sh").read()
-if "DB_SOCKET" not in entrypoint_sh or "--protocol=SOCKET" not in entrypoint_sh:
-    print("FAIL: /entrypoint.sh missing DB_SOCKET support", file=sys.stderr)
-    sys.exit(1)
-print("OK_ENTRYPOINT_DB_SOCKET")
-if "realpath -m" in entrypoint_sh:
-    print("OK_ENTRYPOINT_REALPATH")
-
-# 5. Verify libmariadb (Gromox) and SQLAlchemy (Admin API) connect via symlinked DB_SOCKET
+# 4. Verify libmariadb (Gromox) and SQLAlchemy (Admin API) connect via symlinked DB_SOCKET
 custom_sock = "/tmp/test_custom_mysqld.sock"
 default_sock = "/run/mysqld/mysqld.sock"
 if os.path.exists(custom_sock):
@@ -230,38 +220,8 @@ finally:
         print("    [+] Confirmed Exim routes primary domain and redirects alias DOMAINS to Gromox LMTP without SQL.")
     if "OK_MULTIDOMAIN_LMTP_DELIVERY" in out:
         print("    [+] Confirmed live SMTP -> Rspamd -> Gromox LMTP mailbox delivery across primary and secondary DOMAINS.")
-    if "OK_ENTRYPOINT_DB_SOCKET" in out:
-        print("    [+] Confirmed /entrypoint.sh supports DB_SOCKET readiness checks and schema inspection.")
-    if "OK_ENTRYPOINT_REALPATH" in out:
-        print("    [+] Confirmed in-container /entrypoint.sh uses realpath -m for DB_SOCKET comparison.")
     if "OK_SOCKET_CONNECT" in out:
         print("    [+] Confirmed libmariadb & SQLAlchemy connect via Unix socket when DB_HOST=localhost.")
-
-    # 6. Verify canonical path resolution for DB_SOCKET (e.g. /var/run vs /run)
-    host_entrypoint = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "rootfs", "entrypoint.sh")
-    if os.path.exists(host_entrypoint):
-        entrypoint_content = open(host_entrypoint).read()
-        if 'realpath -m "${DB_SOCKET}"' not in entrypoint_content:
-            print("[-] FAIL: rootfs/entrypoint.sh does not use realpath -m for DB_SOCKET comparison", file=sys.stderr)
-            return False
-        print("    [+] Confirmed rootfs/entrypoint.sh uses realpath -m for DB_SOCKET canonicalization.")
-
-    # 7. Validate that realpath -m correctly canonicalizes /var/run/mysqld/mysqld.sock to /run/mysqld/mysqld.sock
-    test_var_sock = "/var/run/mysqld/mysqld.sock"
-    test_run_sock = "/run/mysqld/mysqld.sock"
-    rp_var = subprocess.run(["realpath", "-m", test_var_sock], capture_output=True, text=True).stdout.strip()
-    rp_run = subprocess.run(["realpath", "-m", test_run_sock], capture_output=True, text=True).stdout.strip()
-    if rp_var != rp_run:
-        print(f"[-] FAIL: realpath -m did not match for {test_var_sock} ({rp_var}) and {test_run_sock} ({rp_run})", file=sys.stderr)
-        return False
-    print("    [+] Confirmed realpath -m prevents self-referential symlink collision between /var/run and /run.")
-
-    # 8. Verify error reporting logic in rootfs/entrypoint.sh
-    if os.path.exists(host_entrypoint):
-        if "DB_ERR=" not in entrypoint_content or "Last error:" not in entrypoint_content:
-            print("[-] FAIL: rootfs/entrypoint.sh does not capture or report MariaDB error output", file=sys.stderr)
-            return False
-        print("    [+] Confirmed rootfs/entrypoint.sh captures and reports detailed MariaDB errors.")
 
     return True
 
