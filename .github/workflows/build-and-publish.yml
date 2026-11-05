@@ -148,7 +148,7 @@ jobs:
             DB_PASSWORD 'p@$$w0rd\'\''#\";-n\w' \
             ADMIN_PASSWORD 'p@$$w0rd\'\''#\";-n\w' \
             RSPAMD_PASSWORD 'p@$$w0rd\'\''#\";-n\w' \
-            LDAP_BIND_PASS 'p@$$w0rd\'\''#\";-n\w' > .env.secrets
+            LDAP_BIND_PASS 'p@$$w0rd-ldap-secure' > .env.secrets
 
       - name: Start services with docker compose
         run: |
