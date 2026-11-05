@@ -144,11 +144,11 @@ jobs:
           echo "LDAP_PORT=10389" >> .env
           # Populate secure non-default secrets with special characters (item 3) so Docker Compose quoting is exercised
           printf "%s='%s'\n" \
-            DB_ROOT_PASSWORD 'p@$$w0rd\'\''#\";-n\4' \
-            DB_PASSWORD 'p@$$w0rd\'\''#\";-n\4' \
-            ADMIN_PASSWORD 'p@$$w0rd\'\''#\";-n\4' \
-            RSPAMD_PASSWORD 'p@$$w0rd\'\''#\";-n\4' \
-            LDAP_BIND_PASS 'p@$$w0rd\'\''#\";-n\4' > .env.secrets
+            DB_ROOT_PASSWORD 'p@$$w0rd\'\''#\";-n\w' \
+            DB_PASSWORD 'p@$$w0rd\'\''#\";-n\w' \
+            ADMIN_PASSWORD 'p@$$w0rd\'\''#\";-n\w' \
+            RSPAMD_PASSWORD 'p@$$w0rd\'\''#\";-n\w' \
+            LDAP_BIND_PASS 'p@$$w0rd\'\''#\";-n\w' > .env.secrets
 
       - name: Start services with docker compose
         run: |

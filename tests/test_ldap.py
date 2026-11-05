@@ -11,7 +11,7 @@ Verifies:
 import subprocess
 import sys
 
-from env_helper import SKIP_EXIT, get_bind_ip, get_ldap_port, ldap_available
+from env_helper import SKIP_EXIT, get_bind_ip, get_ldap_port, ldap_available, wait_until
 
 def run_compose_cmd(cmd_args):
     cmd = ["docker", "compose", "exec", "-T", "grommunio"] + cmd_args
@@ -37,8 +37,12 @@ def check_ldap_integration():
     print("    [+] 'grommunio-admin ldap info' succeeded.")
 
     # Step 3: Search for bootstrap user 'testuser'
-    res = run_compose_cmd(["grommunio-admin", "ldap", "search", "testuser"])
-    if res.returncode != 0 or "testuser" not in res.stdout:
+    def search_testuser():
+        res = run_compose_cmd(["grommunio-admin", "ldap", "search", "testuser"])
+        return res.returncode == 0 and "testuser" in res.stdout
+
+    if not wait_until(search_testuser, timeout=30, interval=2.0):
+        res = run_compose_cmd(["grommunio-admin", "ldap", "search", "testuser"])
         print(f"    [-] Bootstrap user 'testuser' not found in LDAP search: {res.stderr or res.stdout}", file=sys.stderr)
         return False
     print("    [+] Bootstrap user 'testuser' found in LDAP search.")
