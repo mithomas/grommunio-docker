@@ -16,16 +16,25 @@ import os
 import subprocess
 import sys
 
+cfg = {}
+if os.path.isfile("/etc/gromox/mysql_adaptor.cfg"):
+    with open("/etc/gromox/mysql_adaptor.cfg", "r") as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                cfg[k.strip()] = v.strip()
+
 db_socket = os.environ.get("DB_SOCKET", "")
 if db_socket:
     conn_flags = ["--protocol=SOCKET", "-S", db_socket]
 else:
-    db_host = os.environ.get("DB_HOST", "mariadb")
-    db_port = os.environ.get("DB_PORT", "3306")
+    db_host = cfg.get("mysql_host") or os.environ.get("DB_HOST", "mariadb")
+    db_port = cfg.get("mysql_port") or os.environ.get("DB_PORT", "3306")
     conn_flags = ["-h", db_host, "-P", str(db_port)]
-db_user = os.environ.get("DB_USER", "grommunio")
-db_pass = os.environ.get("DB_PASSWORD", "grommunio_secret")
-db_name = os.environ.get("DB_NAME", "grommunio")
+db_user = cfg.get("mysql_username") or os.environ.get("DB_USER", "grommunio")
+db_pass = cfg.get("mysql_password") or os.environ.get("DB_PASSWORD", "grommunio_secret")
+db_name = cfg.get("mysql_dbname") or os.environ.get("DB_NAME", "grommunio")
 
 # 1. Query table count
 env = {**os.environ, "MYSQL_PWD": db_pass}

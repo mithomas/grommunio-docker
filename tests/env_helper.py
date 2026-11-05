@@ -59,6 +59,7 @@ def load_env_secret(var_name: str, default: str = "") -> str:
         fpath = os.path.join(root_dir, fname)
         if os.path.isfile(fpath):
             try:
+                found = None
                 with open(fpath, "r", encoding="utf-8") as f:
                     for line in f:
                         line = line.strip()
@@ -66,7 +67,9 @@ def load_env_secret(var_name: str, default: str = "") -> str:
                             continue
                         key, raw_val = line.split("=", 1)
                         if key.strip() == var_name:
-                            return parse_env_value(raw_val)
+                            found = parse_env_value(raw_val)
+                if found is not None:
+                    return found
             except OSError:
                 pass
 
@@ -241,5 +244,6 @@ def ensure_testuser(address: str = "testuser@example.com", password: str = "test
         container_exec("grommunio-admin", "passwd", address, "--password", password)
     if not exists():
         raise RuntimeError(f"Could not provision {address}")
+    container_exec("chown", "-R", "gromox:gromox", f"/var/lib/gromox/user/{domain}/{local}")
     return address
 
