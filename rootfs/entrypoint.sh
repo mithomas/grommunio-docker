@@ -38,7 +38,7 @@ LDAP_GROUP_NAME=cn
 VAR_LIST=""
 while IFS='=' read -r var default || [ -n "${var}" ]; do
     [ -z "${var}" ] && continue
-    eval "export ${var}=\"\${${var}:-\${default}}\""
+    export "${var}=${!var:-${default}}"
     VAR_LIST="${VAR_LIST} \${${var}}"
 done <<< "${DEFAULTS_TABLE}"
 

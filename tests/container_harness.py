@@ -43,8 +43,8 @@ PERSISTENT = [
 StartupResult = namedtuple("StartupResult", "exit_code output")
 
 
-def _docker(*args, timeout=60, env=None):
-    return subprocess.run(["docker", *args], capture_output=True, text=True, timeout=timeout, env=env)
+def _docker(*args, timeout=60, env=None, input=None):
+    return subprocess.run(["docker", *args], input=input, capture_output=True, text=True, timeout=timeout, env=env)
 
 
 def require_harness():
@@ -67,20 +67,21 @@ def _network() -> str:
 class ScratchDatabase:
     """A disposable database plus a dedicated user, created and dropped on the compose MariaDB."""
 
-    def __init__(self):
+    def __init__(self, password=None):
         suffix = secrets.token_hex(4)
         self.name = f"gtest{suffix}"
         self.user = f"gtest{suffix}"
-        self.password = secrets.token_urlsafe(18)
+        self.password = password or secrets.token_urlsafe(18)
 
     def sql(self, statement: str) -> subprocess.CompletedProcess:
         env = {**os.environ, "MYSQL_PWD": load_env_secret("DB_ROOT_PASSWORD", "root_secret")}
         return _docker("exec", "-e", "MYSQL_PWD", DB_CONTAINER, "mariadb", "-uroot", "-e", statement, env=env)
 
     def __enter__(self):
+        escaped_password = self.password.replace("\\", "\\\\").replace("'", "\\'")
         res = self.sql(
             f"CREATE DATABASE `{self.name}`; "
-            f"CREATE USER '{self.user}'@'%' IDENTIFIED BY '{self.password}'; "
+            f"CREATE USER '{self.user}'@'%' IDENTIFIED BY '{escaped_password}'; "
             f"GRANT ALL PRIVILEGES ON `{self.name}`.* TO '{self.user}'@'%';"
         )
         if res.returncode != 0:
@@ -204,8 +205,18 @@ class Container:
         _docker("stop", "-t", str(grace), self.name, timeout=grace + 30)
         return self.exit_code()
 
-    def exec(self, *args, timeout=60) -> subprocess.CompletedProcess:
-        return _docker("exec", self.name, *args, timeout=timeout)
+    def exec(self, *args, env=None, input=None, timeout=60) -> subprocess.CompletedProcess:
+        env_args = []
+        if env:
+            for k, v in env.items():
+                env_args.extend(["-e", f"{k}={v}"])
+        cmd = ["exec"]
+        if input is not None:
+            cmd.append("-i")
+        cmd.extend(env_args)
+        cmd.append(self.name)
+        cmd.extend(args)
+        return _docker(*cmd, input=input, timeout=timeout)
 
     def __enter__(self):
         return self.start()

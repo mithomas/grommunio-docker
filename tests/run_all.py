@@ -25,7 +25,7 @@ TESTS = [
     ("test_defaults.py", "Mailbox Creation Defaults & Privileges"),
     ("test_db_socket.py", "MariaDB Unix Socket (DB_SOCKET) Connectivity"),
     ("test_multidomain_delivery.py", "Multi-Domain Routing (DOMAINS) via Exim -> LMTP"),
-    ("test_password_escaping.py", "Password Special Characters & Direct Controller Auth"),
+    ("test_password_escaping.py", "Special-Character Passwords End-to-End"),
     ("test_db_init_safety.py", "Database Schema & Migration Idempotence"),
     ("test_startup_safety.py", "Startup Safety (Credentials, DB Failure, SIGTERM, Restart)"),
     ("test_log_retention.py", "Persistent Log Growth Bounding & 1-Year Retention"),

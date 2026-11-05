@@ -373,7 +373,7 @@ A standalone test suite validating all container services, endpoints, credential
 | **`tests/test_ldap.py`** | Validates companion OpenLDAP (`:389`), directory search, and user mailbox downsync. |
 | **`tests/test_db_socket.py`** | Validates `DB_SOCKET` with a custom socket path (entrypoint, Gromox and Admin API; throwaway containers). |
 | **`tests/test_multidomain_delivery.py`** | Validates `DOMAINS` routing: primary, alias and secondary-domain mail reaches the mailbox (throwaway containers). |
-| **`tests/test_password_escaping.py`** | Validates passwords with special characters ($, #, ', ", \, ;) in Rspamd hashing and default-credential gating. |
+| **`tests/test_password_escaping.py`** | Validates special-character passwords ($ # ' " \ ; -n) end-to-end across MariaDB, Gromox, Admin API, and Rspamd (throwaway containers). |
 | **`tests/test_db_init_safety.py`** | Validates the live schema is populated and `gromox-dbop -U` re-runs cleanly. |
 | **`tests/test_startup_safety.py`** | Validates default-credential refusal, DB failure diagnostics, SIGTERM during the schema lock (exit 143), and idempotent restart (throwaway containers). |
 | **`tests/test_log_retention.py`** | Validates the Admin UI log reader (formats, `after` filter, rotated-log fallback) and the logrotate dry run. |
