@@ -19,11 +19,16 @@ DEFAULTS_PATH = "/defaults/createParams"
 
 
 def load_init_defaults():
-    loader = importlib.machinery.SourceFileLoader("grommunio_init_defaults", SCRIPT_PATH)
-    spec = importlib.util.spec_from_loader(loader.name, loader)
-    module = importlib.util.module_from_spec(spec)
-    loader.exec_module(module)
-    return module
+    prev = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
+    try:
+        loader = importlib.machinery.SourceFileLoader("grommunio_init_defaults", SCRIPT_PATH)
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        module = importlib.util.module_from_spec(spec)
+        loader.exec_module(module)
+        return module
+    finally:
+        sys.dont_write_bytecode = prev
 
 
 init_defaults = load_init_defaults()
@@ -63,11 +68,19 @@ def test_invalid_quota_aborts_script():
     return True
 
 
-def configured_defaults():
-    """Expected creation defaults, derived from the same env variables and parsers the init script uses."""
+def configured_user_defaults():
+    """Expected top-level user creation defaults, derived from USER_DEFAULTS_SPEC."""
     return {
         key: parser(load_env_secret(env_var, default))
-        for key, env_var, default, parser in init_defaults.DEFAULTS_SPEC
+        for key, env_var, default, parser in init_defaults.USER_DEFAULTS_SPEC
+    }
+
+
+def configured_quota_defaults():
+    """Expected quota store properties (under user.properties), derived from QUOTA_DEFAULTS_SPEC."""
+    return {
+        key: parser(load_env_secret(env_var, default))
+        for key, env_var, default, parser in init_defaults.QUOTA_DEFAULTS_SPEC
     }
 
 
@@ -85,14 +98,24 @@ def check_defaults():
         return False
     initial = body["data"]
     user = initial.get("user", {})
+    props = user.get("properties", {})
 
     mismatches = []
-    for key, expected in configured_defaults().items():
+    for key, expected in configured_user_defaults().items():
         actual = user.get(key)
-        if actual is None and expected == 0:
-            actual = 0  # an unset quota means unlimited
         if actual != expected:
-            mismatches.append(f"{key}: expected {expected!r}, got {actual!r}")
+            mismatches.append(f"user.{key}: expected {expected!r}, got {actual!r}")
+
+    for key, expected in configured_quota_defaults().items():
+        if key in user:
+            mismatches.append(f"user.{key}: quota must be nested under user.properties, not top-level user")
+        actual = props.get(key)
+        if expected == 0:
+            if actual is not None:
+                mismatches.append(f"user.properties.{key}: expected omitted (None) for unlimited quota, got {actual!r}")
+        elif actual != expected:
+            mismatches.append(f"user.properties.{key}: expected {expected!r}, got {actual!r}")
+
     if mismatches:
         for line in mismatches:
             print(f"    [-] Mismatch for {line}", file=sys.stderr)
@@ -102,17 +125,18 @@ def check_defaults():
     quotas = {"storagequotalimit": 10485760, "prohibitsendquota": 8388608, "prohibitreceivequota": 9437184}
     ok = False
     try:
-        status, _ = api("PUT", DEFAULTS_PATH, body={"user": {**user, **quotas}, "domain": initial.get("domain", {})}, session=session)
+        updated_user = {**user, "properties": {**props, **quotas}}
+        status, _ = api("PUT", DEFAULTS_PATH, body={"user": updated_user, "domain": initial.get("domain", {})}, session=session)
         if status != 200:
             print(f"    [-] PUT {DEFAULTS_PATH} returned HTTP {status}", file=sys.stderr)
             return False
         _, body = api("GET", DEFAULTS_PATH, session=session)
-        written = body["data"]["user"]
-        wrong = {k: written.get(k) for k, v in quotas.items() if written.get(k) != v}
+        written_props = body["data"]["user"].get("properties", {})
+        wrong = {k: written_props.get(k) for k, v in quotas.items() if written_props.get(k) != v}
         if wrong:
-            print(f"    [-] Quotas not returned by the next GET: {wrong}", file=sys.stderr)
+            print(f"    [-] Quotas not returned under user.properties by the next GET: {wrong}", file=sys.stderr)
             return False
-        print("    [+] Non-zero quotas written via the API are returned by the next GET.")
+        print("    [+] Non-zero quotas written under user.properties are returned by the next GET.")
         ok = True
     finally:
         status, _ = api("PUT", DEFAULTS_PATH, body=initial, session=session)

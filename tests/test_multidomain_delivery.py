@@ -42,7 +42,7 @@ def check_multidomain_delivery():
 
         setup = [
             ("grommunio-admin", "domain", "create", "example.com", "-u", "50"),
-            ("grommunio-admin", "user", "create", "--no-defaults", "--alias", "alias.testuser@example.com", MAILBOX),
+            ("grommunio-admin", "user", "create", "--alias", "alias.testuser@example.com", MAILBOX),
         ]
         for cmd in setup:
             res = c.exec(*cmd)

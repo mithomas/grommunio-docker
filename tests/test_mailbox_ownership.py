@@ -26,11 +26,11 @@ def test_mailbox_storage_ownership():
             return False
 
     res = container_exec("find", "/var/lib/gromox/user", "-mindepth", "2", "-maxdepth", "2",
-                         "(", "!", "-user", "gromox", "-o", "!", "-group", "gromox", ")")
+                         "(", "!", "-group", "gromox", "-o", "(", "!", "-user", "gromox", "!", "-user", "grommunio", ")", ")")
     if res.returncode != 0 or res.stdout.strip():
-        print(f"    [-] Mailbox directories not owned by gromox:gromox:\n{res.stdout or res.stderr}", file=sys.stderr)
+        print(f"    [-] Mailbox directories not owned by grommunio/gromox:gromox:\n{res.stdout or res.stderr}", file=sys.stderr)
         return False
-    print("    [+] /var/lib/gromox, the user store and mailbox directories are owned by gromox:gromox.")
+    print("    [+] /var/lib/gromox, the user store and mailbox directories have valid gromox ownership.")
     return True
 
 

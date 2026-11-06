@@ -238,12 +238,10 @@ def ensure_testuser(address: str = "testuser@example.com", password: str = "test
     if ldap_available():
         container_exec("grommunio-admin", "ldap", "downsync", "-c")
     if not exists():
-        # --no-defaults: the CLI rejects the quota keys of the configured creation defaults.
-        container_exec("grommunio-admin", "user", "create", "--no-defaults", "--privWeb", "true", "--privEas", "true",
+        container_exec("grommunio-admin", "user", "create", "--privWeb", "true", "--privEas", "true",
                        "--altname", local, address)
         container_exec("grommunio-admin", "passwd", address, "--password", password)
     if not exists():
         raise RuntimeError(f"Could not provision {address}")
-    container_exec("chown", "-R", "gromox:gromox", f"/var/lib/gromox/user/{domain}/{local}")
     return address
 

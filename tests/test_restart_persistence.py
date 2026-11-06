@@ -65,7 +65,7 @@ def check_restart_persistence():
                 print("    [+] First container healthy; provisioning domain and user...")
 
                 first.exec("grommunio-admin", "domain", "create", "example.com", "-u", "50")
-                res_user = first.exec("grommunio-admin", "user", "create", "--no-defaults",
+                res_user = first.exec("grommunio-admin", "user", "create",
                                       "--privWeb", "true", "--privEas", "true",
                                       "--altname", "persistuser", test_user)
                 if res_user.returncode != 0:

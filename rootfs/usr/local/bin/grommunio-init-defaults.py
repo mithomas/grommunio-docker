@@ -29,7 +29,7 @@ QUOTA_MULTIPLIERS = {
     "t": 1024 * 1024 * 1024, "tb": 1024 * 1024 * 1024, "tib": 1024 * 1024 * 1024,
 }
 
-DEFAULTS_SPEC = [
+USER_DEFAULTS_SPEC = [
     ("lang", "DEFAULT_USER_LANG", "de_DE", str),
     ("privWeb", "DEFAULT_USER_PRIV_WEB", "true", lambda v: str2bool(v)),
     ("privEas", "DEFAULT_USER_PRIV_EAS", "true", lambda v: str2bool(v)),
@@ -42,10 +42,15 @@ DEFAULTS_SPEC = [
     ("privFiles", "DEFAULT_USER_PRIV_FILES", "false", lambda v: str2bool(v)),
     ("privArchive", "DEFAULT_USER_PRIV_ARCHIVE", "false", lambda v: str2bool(v)),
     ("chat", "DEFAULT_USER_CREATE_CHAT_USER", "false", lambda v: str2bool(v)),
+]
+
+QUOTA_DEFAULTS_SPEC = [
     ("storagequotalimit", "DEFAULT_USER_STORAGE_QUOTA", "0", lambda v: parse_quota(v)),
     ("prohibitsendquota", "DEFAULT_USER_SEND_QUOTA", "0", lambda v: parse_quota(v)),
     ("prohibitreceivequota", "DEFAULT_USER_RECEIVE_QUOTA", "0", lambda v: parse_quota(v)),
 ]
+
+DEFAULTS_SPEC = USER_DEFAULTS_SPEC + QUOTA_DEFAULTS_SPEC
 
 
 def str2bool(val):
@@ -105,10 +110,18 @@ def api_request(api_base, method, path, data=None, headers=None):
 
 
 def main():
-    desired = {}
-    for key, env_var, default_val, parser in DEFAULTS_SPEC:
+    desired_user = {}
+    for key, env_var, default_val, parser in USER_DEFAULTS_SPEC:
         try:
-            desired[key] = parser(os.environ.get(env_var, default_val))
+            desired_user[key] = parser(os.environ.get(env_var, default_val))
+        except ValueError as exc:
+            print(f"[init-defaults] ERROR: {exc}", file=sys.stderr)
+            return 1
+
+    desired_quotas = {}
+    for key, env_var, default_val, parser in QUOTA_DEFAULTS_SPEC:
+        try:
+            desired_quotas[key] = parser(os.environ.get(env_var, default_val))
         except ValueError as exc:
             print(f"[init-defaults] ERROR: {exc}", file=sys.stderr)
             return 1
@@ -155,13 +168,32 @@ def main():
     except Exception as ex:
         print(f"[init-defaults] Notice: Could not read existing defaults ({ex}), initializing fresh.", file=sys.stderr)
 
-    user_defaults = current_data.get("user", {})
-    if all(user_defaults.get(k) == v for k, v in desired.items()):
+    user_defaults = dict(current_data.get("user") or {})
+    current_props = dict(user_defaults.get("properties") or {})
+    expected_props = dict(current_props)
+    for k, v in desired_quotas.items():
+        if v > 0:
+            expected_props[k] = v
+        else:
+            expected_props.pop(k, None)
+
+    user_attrs_match = all(user_defaults.get(k) == v for k, v in desired_user.items())
+    no_legacy_top_quotas = all(k not in user_defaults for k in desired_quotas)
+    props_match = current_props == expected_props
+
+    if user_attrs_match and no_legacy_top_quotas and props_match:
         print("[init-defaults] Defaults are already configured with desired parameters. No changes needed.")
         return 0
 
-    # Step 3: Update defaults
-    user_defaults.update(desired)
+    # Step 3: Update defaults (quotas live under user.properties when > 0, omitted when 0/unlimited)
+    user_defaults.update(desired_user)
+    for k in desired_quotas:
+        user_defaults.pop(k, None)
+    if expected_props:
+        user_defaults["properties"] = expected_props
+    else:
+        user_defaults.pop("properties", None)
+
     payload = {
         "user": user_defaults,
         "domain": current_data.get("domain", {})
@@ -177,8 +209,10 @@ def main():
             }
         )
         print("[init-defaults] Successfully configured defaults:")
-        for k, v in desired.items():
+        for k, v in desired_user.items():
             print(f"    - {k}: {v}")
+        for k, v in desired_quotas.items():
+            print(f"    - properties.{k}: {v if v > 0 else 'unlimited'}")
         return 0
     except urllib.error.HTTPError as ex:
         err_msg = ex.read().decode()

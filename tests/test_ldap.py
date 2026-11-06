@@ -17,6 +17,35 @@ def run_compose_cmd(cmd_args):
     cmd = ["docker", "compose", "exec", "-T", "grommunio"] + cmd_args
     return subprocess.run(cmd, capture_output=True, text=True)
 
+
+def _cmd_output(res) -> str:
+    return "\n".join(part.strip() for part in (res.stdout, res.stderr) if part and part.strip())
+
+
+def _verify_provisioned_user() -> bool:
+    res = run_compose_cmd(["grommunio-admin", "user", "query", "-f", "username=testuser@example.com"])
+    if "testuser@example.com" not in res.stdout:
+        print(f"    [-] 'testuser@example.com' missing from user query:\n{_cmd_output(res)}", file=sys.stderr)
+        return False
+    print("    [+] 'testuser@example.com' confirmed provisioned in Grommunio database.")
+
+    res_show = run_compose_cmd(["grommunio-admin", "user", "show", "testuser@example.com"])
+    if "testuser" not in res_show.stdout or "altnames:" not in res_show.stdout:
+        print(f"    [-] 'testuser' missing from altnames for testuser@example.com:\n{_cmd_output(res_show)}", file=sys.stderr)
+        return False
+    print("    [+] Short UID 'testuser' confirmed registered in altnames.")
+
+    res_find = run_compose_cmd(
+        ["find", "/var/lib/gromox/user/example.com", "-maxdepth", "2",
+         "(", "!", "-group", "gromox", "-o", "(", "!", "-user", "gromox", "!", "-user", "grommunio", ")", ")"]
+    )
+    if res_find.returncode != 0 or res_find.stdout.strip():
+        print(f"    [-] Mailbox paths not owned by gromox/grommunio:gromox:\n{_cmd_output(res_find)}", file=sys.stderr)
+        return False
+    print("    [+] Mailbox store owned by grommunio/gromox:gromox.")
+    return True
+
+
 def check_ldap_integration():
     ldap_port = get_ldap_port()
     bind_ip = get_bind_ip()
@@ -32,7 +61,7 @@ def check_ldap_integration():
     # Step 2: Test 'grommunio-admin ldap info' from within grommunio container
     res = run_compose_cmd(["grommunio-admin", "ldap", "info"])
     if res.returncode != 0:
-        print(f"    [-] 'grommunio-admin ldap info' failed: {res.stderr or res.stdout}", file=sys.stderr)
+        print(f"    [-] 'grommunio-admin ldap info' failed:\n{_cmd_output(res)}", file=sys.stderr)
         return False
     print("    [+] 'grommunio-admin ldap info' succeeded.")
 
@@ -43,42 +72,42 @@ def check_ldap_integration():
 
     if not wait_until(search_testuser, timeout=30, interval=2.0):
         res = run_compose_cmd(["grommunio-admin", "ldap", "search", "testuser"])
-        print(f"    [-] Bootstrap user 'testuser' not found in LDAP search: {res.stderr or res.stdout}", file=sys.stderr)
+        print(f"    [-] Bootstrap user 'testuser' not found in LDAP search:\n{_cmd_output(res)}", file=sys.stderr)
         return False
     print("    [+] Bootstrap user 'testuser' found in LDAP search.")
 
-    # Step 4: Ensure primary domain 'example.com' exists in Grommunio
+    # Step 4: Ensure primary domain 'example.com' exists and reset any pre-existing LDAP objects
     run_compose_cmd(["grommunio-admin", "domain", "create", "example.com", "-u", "50"])
+    for addr in ("testuser@example.com", "grommunio-users@example.com"):
+        run_compose_cmd(["grommunio-admin", "user", "delete", "-y", addr])
 
-    # Step 5: Perform LDAP downsync
-    print("    [>] Executing user downsync ('grommunio-admin ldap downsync -c')...")
+    res_pre = run_compose_cmd(["grommunio-admin", "user", "query", "-f", "username=testuser@example.com"])
+    if "testuser@example.com" in res_pre.stdout:
+        print(f"    [-] Could not remove pre-existing 'testuser@example.com' before fresh import test:\n{_cmd_output(res_pre)}",
+              file=sys.stderr)
+        return False
+    print("    [+] Clean pre-downsync state confirmed (no pre-existing 'testuser@example.com').")
+
+    # Step 5: Pass 1 - Fresh LDAP downsync (exercises new user import via Users.create and defaults-system)
+    print("    [>] Pass 1: Executing fresh user import ('grommunio-admin ldap downsync -c')...")
     res = run_compose_cmd(["grommunio-admin", "ldap", "downsync", "-c"])
-    if res.returncode != 0:
-        print(f"    [-] 'grommunio-admin ldap downsync -c' returned error: {res.stderr or res.stdout}", file=sys.stderr)
+    if res.returncode != 0 or "imported as user" not in res.stdout:
+        print(f"    [-] Fresh 'grommunio-admin ldap downsync -c' failed:\n{_cmd_output(res)}", file=sys.stderr)
         return False
-    print("    [+] Downsync executed successfully.")
+    print("    [+] Fresh downsync import executed successfully.")
 
-    # Step 6: Verify user is provisioned in Grommunio with altnames mapped
-    res = run_compose_cmd(["grommunio-admin", "user", "query", "-f", "username=testuser@example.com"])
-    if "testuser@example.com" not in res.stdout:
-        print(f"    [-] 'testuser@example.com' missing from user query after downsync:\n{res.stdout}", file=sys.stderr)
+    if not _verify_provisioned_user():
         return False
-    print("    [+] 'testuser@example.com' confirmed provisioned in Grommunio database.")
 
-    res_show = run_compose_cmd(["grommunio-admin", "user", "show", "testuser@example.com"])
-    if "testuser" not in res_show.stdout or "altnames:" not in res_show.stdout:
-        print(f"    [-] 'testuser' missing from altnames for testuser@example.com:\n{res_show.stdout}", file=sys.stderr)
+    # Step 6: Pass 2 - Existing user LDAP downsync (exercises re-synchronization of an existing user)
+    print("    [>] Pass 2: Executing existing-user re-sync ('grommunio-admin ldap downsync -c')...")
+    res2 = run_compose_cmd(["grommunio-admin", "ldap", "downsync", "-c"])
+    if res2.returncode != 0 or "Synchronizing testuser@example.com..." not in res2.stdout:
+        print(f"    [-] Existing-user 'grommunio-admin ldap downsync -c' failed:\n{_cmd_output(res2)}", file=sys.stderr)
         return False
-    print("    [+] Short UID 'testuser' confirmed registered in altnames.")
+    print("    [+] Existing-user downsync executed successfully.")
 
-    # Step 7: Mailbox store must be owned by the gromox daemon user
-    res = run_compose_cmd(["find", "/var/lib/gromox/user/example.com", "-maxdepth", "2", "!", "-user", "gromox"])
-    if res.returncode != 0 or res.stdout.strip():
-        print(f"    [-] Mailbox paths not owned by gromox:\n{res.stdout or res.stderr}", file=sys.stderr)
-        return False
-    print("    [+] Mailbox store owned by gromox.")
-
-    return True
+    return _verify_provisioned_user()
 
 def main():
     success = check_ldap_integration()
