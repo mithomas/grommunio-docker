@@ -69,7 +69,7 @@ services:
         export MARIADB_DATABASE="$${DB_NAME:-grommunio}"
         export MARIADB_USER="$${DB_USER:-grommunio}"
         export MARIADB_PASSWORD="$${DB_PASSWORD:-grommunio_secret}"
-        exec docker-entrypoint.sh mariadbd
+        exec docker-entrypoint.sh mariadbd --innodb-linux-aio=aio
     volumes:
       - mariadb_data:/var/lib/mysql:rw
     ports:

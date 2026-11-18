@@ -125,6 +125,7 @@ class SocketDatabase:
             "run", "-d", "--name", self.name, "--network", "none", "-v", self.mount("/run/mysqld"),
             "-e", "MARIADB_RANDOM_ROOT_PASSWORD=1", "-e", f"MARIADB_DATABASE={self.db}",
             "-e", f"MARIADB_USER={self.user}", "-e", f"MARIADB_PASSWORD={self.password}", self.IMAGE,
+            "mariadbd", "--innodb-linux-aio=aio",
         )
         if res.returncode != 0:
             self.__exit__()
