@@ -51,7 +51,7 @@ Designed for seamless integration into existing infrastructure:
 |  +-- [ APPLICATION WORKERS & DAEMONS (Managed by Supervisord) ] ---------------+  |
 |  |  * CONTAINER EXIM (MTA :2525, Rspamd spamd filter, internal LMTP transport) |  |
 |  |  * PHP-FPM POOL (Dynamic: 25 max workers for 10 EAS pings + 5 webmail users)|  |
-|  |  * GROMMUNIO ADMIN API (uWSGI: 2 workers, 2 threads, queries :11335 direct) |  |
+|  |  * GROMMUNIO ADMIN API (uWSGI: 1 worker, 4 threads, queries :11335 direct)  |  |
 |  |  * GROMOX DAEMONS (http :10080, midb, zcore, event, delivery, delivery-queue) |  |
 |  |  * REDIS (Local cache & session store, maxmemory 128MB, volatile-lru)       |  |
 |  |  * RSPAMD (Antispam daemon, controller on 127.0.0.1:11335)                  |  |
@@ -81,7 +81,7 @@ This configuration is tuned for **5 active users** and **10 ActiveSync devices**
 - **PHP-FPM Worker Pool (`www.conf`):** `pm = dynamic`, `pm.max_children = 25` (handles EAS long-polling pings + concurrent Webmail requests), `pm.start_servers = 4`, `pm.min_spare_servers = 2`, `pm.max_spare_servers = 8`, `pm.max_requests = 1000`.
 - **Redis (`--maxmemory 128mb`):** `volatile-lru` eviction for sync locks and Bayes tokens (~30–60MB).
 - **Gromox Daemons:** Ingest concurrency up to 5 LDA threads and 50 client contexts (~180–250MB).
-- **Admin API (uWSGI):** 2 worker processes with 2 threads (~80MB).
+- **Admin API (uWSGI):** 1 worker process with 4 threads (~80MB).
 
 ### Memory Footprint Summary
 | Component | Idle / Baseline RAM | Peak / Active RAM |

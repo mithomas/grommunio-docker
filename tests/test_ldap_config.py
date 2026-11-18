@@ -20,6 +20,12 @@ def cfg_value(key):
     return res.stdout.strip().split("=", 1)[1] if res.returncode == 0 else None
 
 
+def _get_display_name(session):
+    """Fetches /system/mconf/ldap and returns (http_status, users.displayName)."""
+    status, resp = api("GET", "/system/mconf/ldap", session=session)
+    return status, (resp or {}).get("data", {}).get("users", {}).get("displayName")
+
+
 def check_ldap_config():
     print("==> Checking Admin API LDAP configuration & disk persistence...")
     try:
@@ -58,9 +64,32 @@ def check_ldap_config():
             print(f"    [-] PUT /system/mconf/ldap failed with HTTP {status}: {body}", file=sys.stderr)
             return False
 
-        if not wait_until(lambda: (api("GET", "/system/mconf/ldap", session=session)[1] or {}).get("data", {}).get("users", {}).get("displayName") == new_value, 5):
-            print("    [-] Changed value was not returned by the next GET.", file=sys.stderr)
+        last = {}
+
+        def got_new_value():
+            st, val = _get_display_name(session)
+            last["status"] = st
+            last["value"] = val
+            return st == 200 and val == new_value
+
+        if not wait_until(got_new_value, 5):
+            print(
+                f"    [-] Changed value was not returned by the next GET "
+                f"(status={last.get('status')}, got={last.get('value')!r}, expected={new_value!r}).",
+                file=sys.stderr,
+            )
             return False
+
+        for i in range(5):
+            st, val = _get_display_name(session)
+            if st != 200 or val != new_value:
+                print(
+                    f"    [-] Inconsistent GET #{i + 1} after update "
+                    f"(status={st}, got={val!r}, expected={new_value!r}).",
+                    file=sys.stderr,
+                )
+                return False
+
         if cfg_value("ldap_user_displayname") != new_value:
             print(f"    [-] {CFG_PATH} does not contain the saved value '{new_value}'.", file=sys.stderr)
             return False
@@ -68,7 +97,8 @@ def check_ldap_config():
         ok = True
     finally:
         status, _ = api("PUT", PUT_PATH, body=original, session=session)
-        restored = status == 200 and cfg_value("ldap_user_displayname") == old_value
+        restored_api = wait_until(lambda: _get_display_name(session) == (200, old_value), 5)
+        restored = status == 200 and restored_api and cfg_value("ldap_user_displayname") == old_value
         if restored:
             print("    [+] Original configuration restored.")
         else:
