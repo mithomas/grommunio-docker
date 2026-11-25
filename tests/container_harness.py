@@ -22,13 +22,13 @@ TMPFS = [
     "/var/lib/nginx:rw,size=64M",
     "/var/lib/grommunio-web:rw,size=32M",
     "/var/lib/php/sessions:rw,size=16M",
-    "/etc/exim4:rw,size=8M",
-    "/etc/clamav:rw,size=4M",
-    "/etc/rspamd/local.d:rw,size=4M",
-    "/etc/supervisor:rw,size=4M",
-    "/etc/gromox:rw,size=16M",
-    "/etc/grommunio-admin-api:rw,size=16M",
-    "/etc/grommunio-admin-common:rw,size=4M",
+    "/etc/exim4:rw,size=1M",
+    "/etc/clamav:rw,size=1M",
+    "/etc/rspamd/local.d:rw,size=1M",
+    "/etc/supervisor:rw,size=1M",
+    "/etc/gromox:rw,size=1M",
+    "/etc/grommunio-admin-api:rw,size=1M",
+    "/etc/grommunio-admin-common:rw,size=1M",
 ]
 
 # Persistent paths are anonymous volumes (removed with the container) so Docker copies the image's

@@ -30,8 +30,12 @@ FOLDER_JUNK = 23
 
 def check_clamd_health() -> bool:
     print("    [>] 1. Verifying clamav-daemon and clamav-freshclam services and socket...")
-    res = container_exec("supervisorctl", "status", "clamav-daemon", "clamav-freshclam")
-    if res.returncode != 0 or res.stdout.count("RUNNING") < 2:
+    if not wait_until(
+        lambda: container_exec("supervisorctl", "status", "clamav-daemon", "clamav-freshclam").stdout.count("RUNNING") == 2,
+        30,
+        1.0,
+    ):
+        res = container_exec("supervisorctl", "status", "clamav-daemon", "clamav-freshclam")
         print(f"    [-] ClamAV services are not RUNNING:\n{res.stdout}{res.stderr}", file=sys.stderr)
         return False
 

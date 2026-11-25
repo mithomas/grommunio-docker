@@ -99,13 +99,13 @@ python3 tests/test_healthcheck.py
    - **Directory Mapping Table:**
      | `.dist/` Image Source (Read-Only) | Runtime `tmpfs` Mount (Writable) | Size | Purpose |
      | :--- | :--- | :--- | :--- |
-     | `/etc/gromox.dist/` | `/etc/gromox` | `16M` | Gromox daemon configs (`*.cfg.template`) & Admin UI LDAP adaptor writes |
-     | `/etc/grommunio-admin-api.dist/` | `/etc/grommunio-admin-api` | `16M` | Admin API (`uwsgi.ini`, `antispam.yaml`, `conf.d/logs.yaml`, `conf.d/database.yaml`) |
-     | `/etc/grommunio-admin-common.dist/` | `/etc/grommunio-admin-common` | `4M` | Admin Web UI `config.json.template` |
-     | `/etc/exim4.dist/` | `/etc/exim4` | `8M` | In-container Exim MTA config (`exim4.conf.template`) |
-     | `/etc/clamav.dist/` | `/etc/clamav` | `4M` | ClamAV daemon & updater configs (`clamd.conf.template`, `freshclam.conf.template`) |
-     | `/etc/rspamd/local.d.dist/` | `/etc/rspamd/local.d` | `4M` | Rspamd local overrides (`redis.conf`, `history_redis.conf`, `worker-controller.inc.template`, `antivirus.conf.template`) |
-     | `/etc/supervisor.dist/` | `/etc/supervisor` | `4M` | Supervisor master config (`supervisord.conf`) & optional service units (`conf.d/clamav.conf`) |
+     | `/etc/gromox.dist/` | `/etc/gromox` | `1M` | Gromox daemon configs (`*.cfg.template`) & Admin UI LDAP adaptor writes |
+     | `/etc/grommunio-admin-api.dist/` | `/etc/grommunio-admin-api` | `1M` | Admin API (`uwsgi.ini`, `antispam.yaml`, `conf.d/logs.yaml`, `conf.d/database.yaml`) |
+     | `/etc/grommunio-admin-common.dist/` | `/etc/grommunio-admin-common` | `1M` | Admin Web UI `config.json.template` |
+     | `/etc/exim4.dist/` | `/etc/exim4` | `1M` | In-container Exim MTA config (`exim4.conf.template`) |
+     | `/etc/clamav.dist/` | `/etc/clamav` | `1M` | ClamAV daemon & updater configs (`clamd.conf.template`, `freshclam.conf.template`) |
+     | `/etc/rspamd/local.d.dist/` | `/etc/rspamd/local.d` | `1M` | Rspamd local overrides (`redis.conf`, `history_redis.conf`, `worker-controller.inc.template`, `antivirus.conf.template`) |
+     | `/etc/supervisor.dist/` | `/etc/supervisor` | `1M` | Supervisor master config (`supervisord.conf`) & optional service units (`conf.d/clamav.conf`) |
    - **5-Step Checklist When Adding or Modifying a `.dist/` + `tmpfs` Directory:**
      1. **`Dockerfile`:** Create `/etc/<service>.dist`, copy any stock deb-installed files from `/etc/<service>/.` into `/etc/<service>.dist/` *before* `COPY --chmod=0755 rootfs/ /`, and place static files or `*.template` files under `rootfs/etc/<service>.dist/`.
      2. **`docker-compose.yml`:** Add `- /etc/<service>:rw,size=<N>M` under the `grommunio` service's `tmpfs:` list.
