@@ -91,16 +91,31 @@ python3 tests/test_healthcheck.py
 1. **Read-Only Root Filesystem (`read_only: true`):**
    - The container runs with an immutable root filesystem.
    - Transient runtime data (sockets, PIDs, buffers, caches) MUST be allocated on `tmpfs` (`/run`, `/tmp`, `/var/tmp`, `/var/lib/nginx`, `/var/lib/grommunio-web`, `/var/lib/php/sessions`).
-   - Persistent operational state (`/var/spool/exim4`, `/var/log`, `/var/lib/gromox`, `/var/lib/redis`, `/var/lib/rspamd`) is mounted via persistent named volumes.
-   - Ephemeral configuration directories (`/etc/gromox`, `/etc/grommunio-admin-api`, `/etc/grommunio-admin-common`, `/etc/exim4`) are mounted via `tmpfs`.
+   - Persistent operational state (`/var/spool/exim4`, `/var/log`, `/var/lib/gromox`, `/var/lib/redis`, `/var/lib/rspamd`, `/var/lib/clamav`) is mounted via persistent named volumes.
+   - Ephemeral configuration directories (`/etc/gromox`, `/etc/grommunio-admin-api`, `/etc/grommunio-admin-common`, `/etc/exim4`, `/etc/clamav`, `/etc/rspamd/local.d`, `/etc/supervisor`) are mounted via `tmpfs`.
 
-2. **Configuration Templating (`.dist/` Mechanism):**
-   - Stock package files and template configurations are stored under `/etc/*.dist/` within the image layers.
-   - At container startup, `entrypoint.sh` populates the `tmpfs` mounts from their corresponding `.dist/` directories, performs environment variable substitution via `envsubst`, and applies file ownership and permissions before launching `supervisord`.
+2. **Configuration Templating (`.dist/` + `tmpfs` Pattern):**
+   - Because the root filesystem is read-only (`read_only: true`), any service configuration directory under `/etc` that needs runtime environment variable interpolation, password hash injection, or Admin API runtime writes (e.g., `/etc/gromox/ldap_adaptor.cfg`) MUST use the `.dist/` + `tmpfs` pattern rather than writing config snippets into `/run`.
+   - **Directory Mapping Table:**
+     | `.dist/` Image Source (Read-Only) | Runtime `tmpfs` Mount (Writable) | Size | Purpose |
+     | :--- | :--- | :--- | :--- |
+     | `/etc/gromox.dist/` | `/etc/gromox` | `16M` | Gromox daemon configs (`*.cfg.template`) & Admin UI LDAP adaptor writes |
+     | `/etc/grommunio-admin-api.dist/` | `/etc/grommunio-admin-api` | `16M` | Admin API (`uwsgi.ini`, `antispam.yaml`, `conf.d/logs.yaml`, `conf.d/database.yaml`) |
+     | `/etc/grommunio-admin-common.dist/` | `/etc/grommunio-admin-common` | `4M` | Admin Web UI `config.json.template` |
+     | `/etc/exim4.dist/` | `/etc/exim4` | `8M` | In-container Exim MTA config (`exim4.conf.template`) |
+     | `/etc/clamav.dist/` | `/etc/clamav` | `4M` | ClamAV daemon & updater configs (`clamd.conf.template`, `freshclam.conf.template`) |
+     | `/etc/rspamd/local.d.dist/` | `/etc/rspamd/local.d` | `4M` | Rspamd local overrides (`redis.conf`, `history_redis.conf`, `worker-controller.inc.template`, `antivirus.conf.template`) |
+     | `/etc/supervisor.dist/` | `/etc/supervisor` | `4M` | Supervisor master config (`supervisord.conf`) & optional service units (`conf.d/clamav.conf`) |
+   - **5-Step Checklist When Adding or Modifying a `.dist/` + `tmpfs` Directory:**
+     1. **`Dockerfile`:** Create `/etc/<service>.dist`, copy any stock deb-installed files from `/etc/<service>/.` into `/etc/<service>.dist/` *before* `COPY --chmod=0755 rootfs/ /`, and place static files or `*.template` files under `rootfs/etc/<service>.dist/`.
+     2. **`docker-compose.yml`:** Add `- /etc/<service>:rw,size=<N>M` under the `grommunio` service's `tmpfs:` list.
+     3. **`tests/container_harness.py`:** Add the identical `"/etc/<service>:rw,size=<N>M"` entry to the `TMPFS` list so throwaway test containers mirror the production `tmpfs` layout.
+     4. **`rootfs/entrypoint.sh`:** Export substituted variables in `VAR_LIST`, `mkdir -p /etc/<service>`, copy any static files from `/etc/<service>.dist/` (excluding `*.template`), and run `render_dir /etc/<service>.dist /etc/<service>` to render `*.template` files via `envsubst "${VAR_LIST}"`.
+     5. **`rootfs/usr/local/bin/grommunio-fix-permissions.sh`:** Enforce directory and file ownership/permissions on `/etc/<service>` (e.g., `0640 root:_rspamd` for `/etc/rspamd/local.d`, `0644 root:root` for `/etc/clamav/*.conf`, `0660 grommunio:gromoxcf` for `/etc/gromox/*`).
 
-3. **In-Container Mail Pipeline:**
-   - **Inbound:** Host Exim routes domain traffic to container Exim on port `2525`. Container Exim scans via Rspamd (`spamd_address = 127.0.0.1 11333 variant=rspamd`) and delivers via internal LMTP to Gromox on port `24`.
-   - **Outbound:** Webmail and ActiveSync submit outbound messages to container Exim (`smtp://127.0.0.1:2525/`), which relays them to the host Exim smarthost (`smtp://${RELAY_HOST}:${RELAY_PORT}`).
+3. **In-Container Mail & Antivirus Pipeline:**
+   - **Inbound:** Host Exim routes domain traffic to container Exim on port `2525`. Container Exim scans via Rspamd (`spamd_address = 127.0.0.1 11333 variant=rspamd`) and ClamAV (`/run/clamav/clamd.ctl`, updated hourly by `freshclam`). Clean messages deliver via LMTP (`:24`) to Inbox (`fid 13`), GTUBE/extreme spam is rejected (`550`), regular spam is routed to Junk (`fid 23`), and ClamAV virus matches (`CLAM_VIRUS`) have `[VIRUS] ` prepended to `Subject`, `X-Virus-Status: Infected` added, are logged in Admin UI Spam History, and are routed to Junk (`fid 23`) while excluded from Bayes training.
+   - **Outbound:** Webmail and ActiveSync submit outbound messages to container Exim (`smtp://127.0.0.1:2525/`), which scans them for malware (`CLAM_VIRUS`), rejecting infected outbound messages (`550`) and relaying clean messages to the host Exim smarthost (`smtp://${RELAY_HOST}:${RELAY_PORT}`).
 
 4. **Spam History Direct Controller Integration:**
    - `grommunio-admin-api` routes Rspamd requests directly to `http://127.0.0.1:11335`, authenticated automatically via Rspamd's `secure_ip = ["127.0.0.1", "::1"]`.
