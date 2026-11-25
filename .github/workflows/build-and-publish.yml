@@ -62,16 +62,30 @@ jobs:
           echo "Querying upstream Grommunio Debian 13 Packages checksum..."
           GROMMUNIO_HASH=$(curl -fsSL --retry 3 --retry-connrefused "https://download.grommunio.com/community/Debian_13/dists/Debian_13/Release" 2>/dev/null | awk '/SHA256:/ {flag=1; next} /^[A-Z][A-Za-z0-9-]+:/ {flag=0} flag && /main\/binary-amd64\/Packages$/ {print $1; exit}' 2>/dev/null || true)
 
-          if [ -z "$DEBIAN_DIGEST" ] || [ -z "$GROMMUNIO_HASH" ]; then
+          echo "Querying upstream Debian 13 (trixie, trixie-updates, trixie-security) core component versions..."
+          DEBIAN_PKGS_HASH=$(
+            for url in \
+              "https://deb.debian.org/debian/dists/trixie/main/binary-amd64/Packages.xz" \
+              "https://deb.debian.org/debian/dists/trixie-updates/main/binary-amd64/Packages.xz" \
+              "https://deb.debian.org/debian-security/dists/trixie-security/main/binary-amd64/Packages.xz"; do
+              curl -fsSL --retry 3 --retry-connrefused "$url" 2>/dev/null | xz -dc 2>/dev/null || true
+            done | awk '
+              /^Package: (rspamd|clamav-daemon|exim4-daemon-heavy|nginx|redis-server|php-cli|openssl|libssl3t64|libgnutls30t64|ca-certificates|libc6|libxml2|libarchive13t64|libcurl4t64|libsqlite3-0)$/ { pkg=$2; next }
+              pkg != "" && /^Version: / { print pkg "=" $2; pkg="" }
+            ' | sort -u | sha256sum | awk '{print $1}'
+          )
+
+          if [ -z "$DEBIAN_DIGEST" ] || [ -z "$GROMMUNIO_HASH" ] || [ -z "$DEBIAN_PKGS_HASH" ]; then
             echo "::warning::Unable to retrieve upstream digests. Fallback to trigger build."
             echo "should_build=true" >> "$GITHUB_OUTPUT"
             echo "fingerprint=fallback-$(date +%s)" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          FINGERPRINT=$(echo -n "${DEBIAN_DIGEST}-${GROMMUNIO_HASH}" | sha256sum | awk '{print $1}')
+          FINGERPRINT=$(echo -n "${DEBIAN_DIGEST}-${GROMMUNIO_HASH}-${DEBIAN_PKGS_HASH}" | sha256sum | awk '{print $1}')
           echo "Debian base digest: ${DEBIAN_DIGEST}"
           echo "Grommunio repo SHA256: ${GROMMUNIO_HASH}"
+          echo "Debian core packages SHA256: ${DEBIAN_PKGS_HASH}"
           echo "Computed upstream fingerprint: ${FINGERPRINT}"
           echo "fingerprint=${FINGERPRINT}" >> "$GITHUB_OUTPUT"
 
@@ -128,6 +142,7 @@ jobs:
           platforms: linux/amd64
           load: true
           tags: grommunio-ci:local
+          no-cache: ${{ needs.check-upstream.outputs.cache_hit != 'true' || inputs.force_build == true }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

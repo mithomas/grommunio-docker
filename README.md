@@ -399,7 +399,7 @@ Two GitHub Actions workflows automate container builds, integration testing, and
 
 ### Smart Upstream Update Detection
 1. **Periodic Scan:** Runs every 6 hours (`0 */6 * * *`) via GitHub Actions cron.
-2. **Digest Check:** Queries Docker Hub for `debian:trixie-slim` digest and the Grommunio Debian 13 repository (`https://download.grommunio.com/community/Debian_13/dists/Debian_13/Release`) for the `SHA256` checksum of `main/binary-amd64/Packages`.
+2. **Digest Check:** Queries Docker Hub for `debian:trixie-slim` digest, the Grommunio Debian 13 repository `Packages` `SHA256`, and Debian 13 (`trixie`/`trixie-updates`/`trixie-security`) core package versions (ClamAV, Exim, Nginx, Redis, PHP, etc.).
 3. **Cache Evaluation:** Exits within seconds if neither upstream source nor local code changed.
 4. **Automatic Rebuild:** Automatically builds, tests, and publishes an updated image whenever upstream packages or the base image change.
 
