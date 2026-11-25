@@ -81,16 +81,10 @@ RUN rm -f /etc/nginx/sites-enabled/* /etc/nginx/sites-available/* /etc/nginx/con
     && if [ -f /etc/grommunio-web/config.php ]; then sed -i 's|:8080/api/v1/|:8081/api/v1/|g' /etc/grommunio-web/config.php; fi \
     && if [ -f /etc/rspamd/worker-controller.inc ]; then sed -i 's|^password = .*|# password|' /etc/rspamd/worker-controller.inc; fi
 
-# 5. Patch grommunio-admin-api for RFC 9112 hop-by-hop header compliance and file-based logging:
-# Strips hop-by-hop headers ('transfer-encoding', 'content-length', 'connection', 'content-encoding')
-# when proxying upstream responses in vhostStatus and rspamdProxy. This prevents uWSGI from sending
-# both Content-Length and Transfer-Encoding simultaneously on chunked responses, which causes
-# Nginx 1.25+ reverse proxy to abort with 502 Bad Gateway.
-# Allows 'file' format in schema for containerized file-based log monitoring.
-# Pre-compiles modified bytecode so python does not attempt to write .pyc files to the read-only rootfs.
-RUN python3 -c 'p = "/usr/share/grommunio-admin-api/endpoints/system/misc.py"; s = open(p).read(); old = "return res.raw.read(), res.status_code, res.headers.items()"; new = "excluded = {\"content-encoding\", \"content-length\", \"transfer-encoding\", \"connection\"}\n    headers = [(k, v) for k, v in res.headers.items() if k.lower() not in excluded]\n    return res.content, res.status_code, headers"; assert s.count(old) == 2, f"Expected 2 occurrences of target string, found {s.count(old)}"; open(p, "w").write(s.replace(old, new))' \
-    && sed -i 's/enum: \[journald\]/enum: [journald, file]/' /usr/share/grommunio-admin-api/res/config.yaml \
-    && python3 -m compileall /usr/share/grommunio-admin-api/endpoints/system/misc.py
+# 5. Patch grommunio-admin-api schema for containerized file-based log monitoring:
+# Allows 'file' format in /usr/share/grommunio-admin-api/res/config.yaml alongside 'journald'.
+RUN sed -i 's/enum: \[journald\]/enum: [journald, file]/' /usr/share/grommunio-admin-api/res/config.yaml \
+    && grep -q 'enum: \[journald, file\]' /usr/share/grommunio-admin-api/res/config.yaml
 
 # 6. Create persistent and mountpoint directories
 RUN mkdir -p /var/lib/gromox /var/lib/redis /var/lib/rspamd /var/lib/grommunio-admin-common /var/lib/grommunio-admin-api /var/lib/grommunio-web \
