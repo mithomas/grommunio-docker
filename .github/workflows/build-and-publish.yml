@@ -220,6 +220,7 @@ jobs:
             echo "ADMIN_API_VER=$(dpkg-query -W -f="\${Version}" grommunio-admin-api 2>/dev/null || echo unknown)"
             echo "ADMIN_WEB_VER=$(dpkg-query -W -f="\${Version}" grommunio-admin-web 2>/dev/null || echo unknown)"
             echo "RSPAMD_VER=$(dpkg-query -W -f="\${Version}" rspamd 2>/dev/null || echo unknown)"
+            echo "CLAMAV_VER=$(dpkg-query -W -f="\${Version}" clamav-daemon 2>/dev/null || echo unknown)"
             echo "EXIM_VER=$(dpkg-query -W -f="\${Version}" exim4-daemon-heavy 2>/dev/null || echo unknown)"
             echo "NGINX_VER=$(dpkg-query -W -f="\${Version}" nginx 2>/dev/null || echo unknown)"
             echo "REDIS_VER=$(dpkg-query -W -f="\${Version}" redis-server 2>/dev/null || echo unknown)"
@@ -246,6 +247,7 @@ jobs:
           echo "Admin API version: ${ADMIN_API_VER}"
           echo "Admin Web version: ${ADMIN_WEB_VER}"
           echo "Rspamd version: ${RSPAMD_VER}"
+          echo "ClamAV version: ${CLAMAV_VER}"
           echo "Exim version: ${EXIM_VER}"
           echo "Nginx version: ${NGINX_VER}"
           echo "Redis version: ${REDIS_VER}"
@@ -270,6 +272,7 @@ jobs:
             echo "| **Admin API** | \`${ADMIN_API_VER}\` |"
             echo "| **Admin Web UI** | \`${ADMIN_WEB_VER}\` |"
             echo "| **Rspamd** | \`${RSPAMD_VER}\` |"
+            echo "| **ClamAV** | \`${CLAMAV_VER}\` |"
             echo "| **Exim** | \`${EXIM_VER}\` |"
             echo "| **Nginx** | \`${NGINX_VER}\` |"
             echo "| **Redis** | \`${REDIS_VER}\` |"
@@ -281,7 +284,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
           # Attach OCI metadata labels to the built image
-          printf 'FROM grommunio-ci:local\nLABEL org.opencontainers.image.created="%s" \\\n      org.opencontainers.image.revision="%s" \\\n      org.opencontainers.image.version.gromox="%s" \\\n      org.opencontainers.image.version.webmail="%s" \\\n      org.opencontainers.image.version.zpush="%s" \\\n      org.opencontainers.image.version.admin-api="%s" \\\n      org.opencontainers.image.version.admin-web="%s" \\\n      org.opencontainers.image.version.rspamd="%s" \\\n      org.opencontainers.image.version.exim="%s" \\\n      org.opencontainers.image.version.nginx="%s" \\\n      org.opencontainers.image.version.redis="%s" \\\n      org.opencontainers.image.version.php="%s" \\\n      org.opencontainers.image.version.debian="%s"\n' \
+          printf 'FROM grommunio-ci:local\nLABEL org.opencontainers.image.created="%s" \\\n      org.opencontainers.image.revision="%s" \\\n      org.opencontainers.image.version.gromox="%s" \\\n      org.opencontainers.image.version.webmail="%s" \\\n      org.opencontainers.image.version.zpush="%s" \\\n      org.opencontainers.image.version.admin-api="%s" \\\n      org.opencontainers.image.version.admin-web="%s" \\\n      org.opencontainers.image.version.rspamd="%s" \\\n      org.opencontainers.image.version.clamav="%s" \\\n      org.opencontainers.image.version.exim="%s" \\\n      org.opencontainers.image.version.nginx="%s" \\\n      org.opencontainers.image.version.redis="%s" \\\n      org.opencontainers.image.version.php="%s" \\\n      org.opencontainers.image.version.debian="%s"\n' \
             "${RFC3339_TIME}" \
             "${GITHUB_SHA}" \
             "${GROMOX_VER}" \
@@ -290,6 +293,7 @@ jobs:
             "${ADMIN_API_VER}" \
             "${ADMIN_WEB_VER}" \
             "${RSPAMD_VER}" \
+            "${CLAMAV_VER}" \
             "${EXIM_VER}" \
             "${NGINX_VER}" \
             "${REDIS_VER}" \

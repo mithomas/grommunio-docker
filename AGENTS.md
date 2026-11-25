@@ -23,6 +23,7 @@ All functional verification checks performed during development are codified as 
 | **`tests/test_admin_auth.py`** | Admin API & JWT Authentication | Tests login credential validation, JWT token issuance, access to protected endpoints, and rejection of missing or forged tokens (401). |
 | **`tests/test_rspamd_auth.py`** | Rspamd Dedicated Authentication | Tests that unauthenticated requests to `:11334` are rejected and that valid authentication (`RSPAMD_PASSWORD`) grants access to Rspamd controller endpoints (`/auth`, `/stat`). |
 | **`tests/test_mail_pipeline.py`** | End-to-End Mail & Spam Pipeline | Injects an SMTP test email into container Exim (`:2525`), confirms delivery into the mailbox via Rspamd and Gromox LMTP (`:24`), asserts the message's **Spam History** record, and checks that a GTUBE message is rejected (550) and not delivered. |
+| **`tests/test_clamav.py`** | ClamAV Antivirus Quarantine, Tagging & Outbound Block | Verifies `clamav-daemon` and `clamav-freshclam` health, inbound EICAR quarantine to Junk (`fid 23`) with `[VIRUS] ` subject prefix and Spam History logging, Bayes sync exclusion, and outbound EICAR `550` rejection. |
 | **`tests/test_outbound_relay.py`** | Outbound Smarthost Relay & Spool Retention | Validates outbound relay to smarthost, message spool queue retention during relay outage, and delivery upon recovery (throwaway containers). |
 | **`tests/test_live_status.py`** | Admin UI Live Status & VTS Telemetry | Validates `/system/vhostStatus/local` endpoint, verifies prevention of 502 Bad Gateway via header sanitization, and confirms Nginx VTS telemetry payload structure. |
 | **`tests/test_monitoring_logs.py`** | Admin UI Monitoring Logs | Validates file-based log readers in Admin UI Monitoring tab (`/system/logs`), verifies Exim log replaces Postfix, and confirms entry formatting and time filters. |
@@ -55,6 +56,7 @@ python3 tests/test_webmail_security.py
 python3 tests/test_admin_auth.py
 python3 tests/test_rspamd_auth.py
 python3 tests/test_mail_pipeline.py
+python3 tests/test_clamav.py
 python3 tests/test_outbound_relay.py
 python3 tests/test_live_status.py
 python3 tests/test_monitoring_logs.py
@@ -118,7 +120,7 @@ python3 tests/test_healthcheck.py
    - **Docker Hub Overview Sync:** The workflow `.github/workflows/sync-dockerhub-readme.yml` automatically syncs `README.md` (along with the short description and completed GitHub URLs) to the Docker Hub repository overview whenever `README.md` is updated on `main` or triggered via `workflow_dispatch` (as well as during image publication in `build-and-publish.yml`). `README.md` must stay under Docker Hub's 25,000-byte limit.
    - **Upstream Change Detection:** Compares remote `debian:trixie-slim` digest and Grommunio Debian 13 repository packages SHA256 checksum against GitHub Actions cache, bypassing redundant builds when upstream dependencies have not changed.
    - **Pre-Publication Gate:** Image builds for `linux/amd64` and starts the full test stack (`docker compose --profile test up -d`). Tests run via `python3 tests/run_all.py`. Publication to Docker Hub only proceeds if all verification tests pass.
-   - **Image Tagging & OCI Labels:** Pushes `:latest`, `:<major>`, `:<minor>`, `:<patch>`, and `:<patch>-<timestamp>-<short-sha>` (e.g. `3.12.268-20261001-1339-<commit>`). Embeds OCI metadata labels (`org.opencontainers.image.*`) covering all core component versions (Gromox, Webmail, Z-Push, Admin API, Admin Web, Rspamd, Exim, Nginx, Redis, PHP, and Debian point release).
+   - **Image Tagging & OCI Labels:** Pushes `:latest`, `:<major>`, `:<minor>`, `:<patch>`, and `:<patch>-<timestamp>-<short-sha>` (e.g. `3.12.268-20261001-1339-<commit>`). Embeds OCI metadata labels (`org.opencontainers.image.*`) covering all core component versions (Gromox, Webmail, Z-Push, Admin API, Admin Web, Rspamd, ClamAV, Exim, Nginx, Redis, PHP, and Debian point release).
    - **Required Secrets:** `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`, and optional `DOCKERHUB_REPOSITORY` (defaults to `${DOCKERHUB_USERNAME}/grommunio-docker`).
 
 8. **Dedicated Host Port Mapping Architecture:**

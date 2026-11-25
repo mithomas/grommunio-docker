@@ -1,0 +1,32 @@
+# ==============================================================================
+# ClamAV Daemon (clamd) Configuration for Grommunio Container
+# ==============================================================================
+LocalSocket /run/clamav/clamd.ctl
+LocalSocketGroup clamav
+LocalSocketMode 660
+FixStaleSocket true
+User clamav
+PidFile /run/clamav/clamd.pid
+DatabaseDirectory /var/lib/clamav
+TemporaryDirectory /tmp
+LogFile /var/log/clamav/clamav.log
+LogTime true
+LogClean false
+
+# Memory & Concurrency Tuning (5 users / 10 devices)
+# ConcurrentDatabaseReload no frees the old signature engine before loading
+# updated signatures, eliminating the ~1.2 GB 2x memory spike during reloads.
+ConcurrentDatabaseReload no
+MaxThreads 2
+MaxQueue 32
+MaxScanSize 32M
+MaxFileSize 16M
+StreamMaxLength 16M
+
+# Content Scanners
+ScanMail true
+ScanArchive true
+ScanPDF true
+ScanOLE2 true
+ScanHTML true
+Bytecode true

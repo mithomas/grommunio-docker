@@ -54,6 +54,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       python3-cryptography \
       redis-server \
       rspamd \
+      clamav-daemon \
+      clamav-freshclam \
       exim4-daemon-heavy \
       supervisor \
       mariadb-client \
@@ -72,8 +74,12 @@ RUN getent group gromoxcf >/dev/null || groupadd -r gromoxcf && \
     usermod -aG Debian-exim,adm grommunio 2>/dev/null || true && \
     if [ -d /etc/grommunio-sync ]; then chmod 0755 /etc/grommunio-sync && usermod -aG grosync www-data 2>/dev/null || true; fi && \
     usermod -aG gromox www-data 2>/dev/null || true && \
+    getent group clamav >/dev/null || groupadd -r clamav && \
+    getent passwd clamav >/dev/null || useradd -r -g clamav -d /var/lib/clamav -s /usr/sbin/nologin clamav && \
     getent group _rspamd >/dev/null || groupadd -r _rspamd && \
-    getent passwd _rspamd >/dev/null || useradd -r -g _rspamd -d /var/lib/rspamd -s /usr/sbin/nologin _rspamd
+    getent passwd _rspamd >/dev/null || useradd -r -g _rspamd -d /var/lib/rspamd -s /usr/sbin/nologin _rspamd && \
+    usermod -aG clamav _rspamd 2>/dev/null || true && \
+    usermod -aG clamav grommunio 2>/dev/null || true
 
 # 4. Service configuration tuning and cleanups
 RUN rm -f /etc/nginx/sites-enabled/* /etc/nginx/sites-available/* /etc/nginx/conf.d/grommunio.conf \
@@ -87,16 +93,19 @@ RUN sed -i 's/enum: \[journald\]/enum: [journald, file]/' /usr/share/grommunio-a
     && grep -q 'enum: \[journald, file\]' /usr/share/grommunio-admin-api/res/config.yaml
 
 # 6. Create persistent and mountpoint directories
-RUN mkdir -p /var/lib/gromox /var/lib/redis /var/lib/rspamd /var/lib/grommunio-admin-common /var/lib/grommunio-admin-api /var/lib/grommunio-web \
+RUN mkdir -p /var/lib/gromox /var/lib/redis /var/lib/rspamd /var/lib/clamav /var/lib/grommunio-admin-common /var/lib/grommunio-admin-api /var/lib/grommunio-web \
     /var/lib/grommunio-web/session /var/lib/grommunio-web/tmp /var/lib/php/sessions \
-    /run/gromox /run/php /run/redis /run/rspamd /run/supervisor /run/grommunio-admin-api \
-    /var/log/gromox /var/log/supervisor /var/log/nginx /var/log/grommunio-sync /var/log/redis /var/log/rspamd \
+    /run/gromox /run/php /run/redis /run/rspamd /run/clamav /run/supervisor /run/grommunio-admin-api \
+    /var/log/gromox /var/log/supervisor /var/log/nginx /var/log/grommunio-sync /var/log/redis /var/log/rspamd /var/log/clamav \
     /var/lib/nginx/body /var/lib/nginx/fastcgi /var/lib/nginx/proxy /var/lib/nginx/scgi /var/lib/nginx/uwsgi \
     /var/spool/exim4 /var/log/exim4 \
-    /etc/gromox.dist /etc/grommunio-admin-api.dist /etc/grommunio-admin-common.dist /etc/exim4.dist /etc/php.dist \
+    /etc/gromox.dist /etc/grommunio-admin-api.dist /etc/grommunio-admin-common.dist /etc/exim4.dist /etc/clamav.dist /etc/rspamd/local.d.dist /etc/supervisor.dist /etc/php.dist \
     && if [ -d /etc/grommunio-admin-api ]; then cp -a /etc/grommunio-admin-api/. /etc/grommunio-admin-api.dist/; fi \
     && if [ -d /etc/grommunio-admin-common ]; then cp -a /etc/grommunio-admin-common/. /etc/grommunio-admin-common.dist/; fi \
-    && if [ -d /etc/exim4 ]; then cp -a /etc/exim4/. /etc/exim4.dist/; fi
+    && if [ -d /etc/exim4 ]; then cp -a /etc/exim4/. /etc/exim4.dist/; fi \
+    && if [ -d /etc/clamav ]; then cp -a /etc/clamav/. /etc/clamav.dist/; fi \
+    && if [ -d /etc/rspamd/local.d ]; then cp -a /etc/rspamd/local.d/. /etc/rspamd/local.d.dist/; fi \
+    && if [ -d /etc/supervisor ]; then cp -a /etc/supervisor/. /etc/supervisor.dist/; fi
 
 # 7. Copy filesystem overlay and apply modular configurations
 COPY --chmod=0755 rootfs/ /
@@ -109,7 +118,7 @@ RUN for POOL_DIR in $(find /etc/php -type d -name "pool.d" 2>/dev/null); do \
     done \
     && sed -i 's/\r$//' /entrypoint.sh /usr/local/bin/* 2>/dev/null || true \
     && chmod +x /entrypoint.sh /usr/local/bin/* 2>/dev/null || true \
-    && chmod 0644 /etc/logrotate.d/* 2>/dev/null || true \
+    && chmod 0644 /etc/logrotate.d/* /etc/clamav.dist/* 2>/dev/null || true \
     && python3 -m compileall -q /usr/share/grommunio-admin-api/
 
 ENV TZ=UTC

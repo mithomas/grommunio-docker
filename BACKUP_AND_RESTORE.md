@@ -17,6 +17,7 @@ A Grommunio deployment divides state across persistent volumes, configuration fi
 | **Antispam State** | `antispam_data` (`/var/lib/rspamd`) | Persistent | **Important** | Rspamd Bayes learned database (`bayes_learned.sqlite3`), DKIM keys, and statistics. |
 | **Admin API State** | `admin_data`, `admin_api_data` | Persistent | **Important** | Session tokens, audit logs, and API preferences. |
 | **Mail Queue** | `exim_spool` (`/var/spool/exim4`) | Persistent | **Low** | In-flight transient mail spool. Only needed if messages were queued during outage. |
+| **ClamAV Signatures** | `clamav_data` (`/var/lib/clamav`) | Persistent | **Regenerable** | ClamAV virus definitions (`main.cvd`, `daily.cvd`, `bytecode.cvd`). Automatically downloaded by `freshclam` if lost. |
 | **Redis Cache** | `redis_data` (`/var/lib/redis`) | Persistent | **Regenerable** | Ephemeral cache and Rspamd transient state. Automatically rebuilt if lost. |
 | **Service Logs** | `log_data` (`/var/log`) | Persistent | **Optional** | Rotated application logs. Not required for service recovery. |
 | **Runtime Buffers** | `/run`, `/tmp`, `/var/tmp` | `tmpfs` | **Ignore** | Ephemeral sockets, PIDs, and session caches. Regenerated on container start. |

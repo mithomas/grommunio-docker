@@ -16,6 +16,7 @@
 
 /var/log/exim4/*.log
 /var/log/rspamd/*.log
+/var/log/clamav/*.log
 /var/log/nginx/*.log
 /var/log/php*.log
 /var/log/grommunio-admin-api.log

@@ -33,6 +33,7 @@ LDAP_GROUP_MEMBER_ATTR=memberOf
 LDAP_GROUP_ADDR=mailPrimaryAddress
 LDAP_GROUP_FILTER=(objectclass=posixgroup)
 LDAP_GROUP_NAME=cn
+CLAMAV_ACTION=quarantine
 "
 
 VAR_LIST=""
@@ -48,6 +49,7 @@ export TIMEZONE="${TIMEZONE:-UTC}"
 export BAYES_SYNC_INTERVAL="${BAYES_SYNC_INTERVAL:-300}"
 export LOGROTATE_INTERVAL="${LOGROTATE_INTERVAL:-3600}"
 export LDAP_ENABLED="${LDAP_ENABLED:-true}"
+export CLAMAV_ENABLED="${CLAMAV_ENABLED:-true}"
 
 if [ "${LDAP_ENABLED}" = "true" ]; then
     export GROMOX_AUTH_BACKEND="ldap"
@@ -56,7 +58,12 @@ else
     export GROMOX_AUTH_BACKEND="deny_all"
     export LDAP_DISABLED="true"
 fi
-VAR_LIST="${VAR_LIST} \${GROMOX_AUTH_BACKEND} \${LDAP_DISABLED}"
+if [ "${CLAMAV_ACTION}" = "reject" ]; then
+    export CLAMAV_ACTION_LINE='  action = "reject";'
+else
+    export CLAMAV_ACTION_LINE=""
+fi
+VAR_LIST="${VAR_LIST} \${GROMOX_AUTH_BACKEND} \${LDAP_DISABLED} \${CLAMAV_ACTION_LINE}"
 
 if [ -n "${DB_SOCKET}" ]; then
     export DB_HOST="localhost"
@@ -82,17 +89,17 @@ if [ -n "${INSECURE_WARNINGS}" ]; then
 fi
 
 # 2. Setup tmpfs directories
-mkdir -p /run/gromox /run/php /run/redis /run/rspamd /run/supervisor /run/grommunio-admin-api /run/nginx /run/mysqld
+mkdir -p /run/gromox /run/php /run/redis /run/rspamd /run/clamav /run/supervisor /run/grommunio-admin-api /run/nginx /run/mysqld
 if [ -n "${DB_SOCKET}" ] && [ "$(realpath -m "${DB_SOCKET}")" != "$(realpath -m /run/mysqld/mysqld.sock)" ]; then
     ln -sf "${DB_SOCKET}" /run/mysqld/mysqld.sock
 fi
-mkdir -p /var/log/gromox /var/log/supervisor /var/log/nginx /var/log/grommunio-sync /var/log/redis /var/log/rspamd /var/log/exim4
+mkdir -p /var/log/gromox /var/log/supervisor /var/log/nginx /var/log/grommunio-sync /var/log/redis /var/log/rspamd /var/log/clamav /var/log/exim4
 mkdir -p /var/lib/nginx/body /var/lib/nginx/fastcgi /var/lib/nginx/proxy /var/lib/nginx/scgi /var/lib/nginx/uwsgi
-mkdir -p /var/lib/gromox/queue /var/lib/redis /var/lib/rspamd /var/lib/grommunio-admin-common /var/lib/grommunio-admin-api /var/lib/grommunio-web/session /var/lib/grommunio-web/tmp /var/lib/php/sessions
-mkdir -p /var/spool/exim4 /etc/exim4 /etc/gromox /etc/grommunio-admin-api/conf.d /etc/grommunio-admin-common
+mkdir -p /var/lib/gromox/queue /var/lib/redis /var/lib/rspamd /var/lib/clamav /var/lib/grommunio-admin-common /var/lib/grommunio-admin-api /var/lib/grommunio-web/session /var/lib/grommunio-web/tmp /var/lib/php/sessions
+mkdir -p /var/spool/exim4 /etc/exim4 /etc/clamav /etc/rspamd/local.d /etc/supervisor/conf.d /etc/gromox /etc/grommunio-admin-api/conf.d /etc/grommunio-admin-common
 
 # Create service log files dynamically for active PHP version
-touch /var/log/exim4/mainlog /var/log/grommunio-admin-api.log
+touch /var/log/exim4/mainlog /var/log/grommunio-admin-api.log /var/log/clamav/clamav.log /var/log/clamav/freshclam.log
 for php_conf in /etc/php/*/fpm/php-fpm.conf; do
     if [ -f "${php_conf}" ]; then
         php_log=$(awk -F'= ' '/^error_log/ {print $2}' "${php_conf}" | tr -d ' ')
@@ -116,9 +123,8 @@ if [ -z "${RSPAMD_HASH}" ]; then
     echo "ERROR: Failed to generate Rspamd controller password hash with 'rspamadm pw'." >&2
     exit 1
 fi
-echo "password = \"${RSPAMD_HASH}\";" > /run/rspamd/worker-controller-password.inc
-chmod 0640 /run/rspamd/worker-controller-password.inc
-chown _rspamd:_rspamd /run/rspamd/worker-controller-password.inc
+export RSPAMD_HASH
+VAR_LIST="${VAR_LIST} \${RSPAMD_HASH}"
 
 # Export timezone for processes
 export TZ="${TIMEZONE:-UTC}"
@@ -138,7 +144,22 @@ render_dir() {
 
 render_dir /etc/gromox.dist /etc/gromox
 render_dir /etc/exim4.dist /etc/exim4
+render_dir /etc/clamav.dist /etc/clamav
 render_dir /etc/grommunio-admin-common.dist /etc/grommunio-admin-common
+
+cp -a /etc/rspamd/local.d.dist/. /etc/rspamd/local.d/
+rm -f /etc/rspamd/local.d/*.template
+render_dir /etc/rspamd/local.d.dist /etc/rspamd/local.d
+if [ "${CLAMAV_ENABLED}" != "true" ]; then
+    rm -f /etc/rspamd/local.d/antivirus.conf
+fi
+
+cp -f /etc/supervisor.dist/supervisord.conf /etc/supervisor/supervisord.conf
+if [ "${CLAMAV_ENABLED}" = "true" ]; then
+    cp -f /etc/supervisor.dist/clamav.conf /etc/supervisor/conf.d/clamav.conf
+else
+    rm -f /etc/supervisor/conf.d/clamav.conf
+fi
 
 cp -a /etc/grommunio-admin-api.dist/. /etc/grommunio-admin-api/
 [ -f /etc/grommunio-admin-api/uwsgi.ini ] && cp -f /etc/grommunio-admin-api/uwsgi.ini /etc/grommunio-admin-api/conf.d/

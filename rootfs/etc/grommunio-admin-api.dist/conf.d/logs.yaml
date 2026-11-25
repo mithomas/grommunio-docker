@@ -5,6 +5,12 @@ logs:
   Antispam:
     format: file
     source: /var/log/rspamd/rspamd.log
+  ClamAV:
+    format: file
+    source: /var/log/clamav/clamav.log
+  Freshclam:
+    format: file
+    source: /var/log/clamav/freshclam.log
   Exim:
     format: file
     source: /var/log/exim4/mainlog

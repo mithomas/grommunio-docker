@@ -13,7 +13,7 @@ import urllib.parse
 from env_helper import admin_session, api, ensure_testuser, send_mail, wait_until
 
 PRECTIME_REGEX = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{1,6}$")
-CORE_TARGETS = ["Antispam", "Gromox http", "Gromox delivery", "Admin API", "Nginx"]
+CORE_TARGETS = ["Antispam", "ClamAV", "Freshclam", "Gromox http", "Gromox delivery", "Admin API", "Nginx"]
 
 
 def entries(session, target, query=""):

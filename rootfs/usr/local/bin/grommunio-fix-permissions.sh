@@ -56,12 +56,31 @@ for p in /var/lib/redis /run/redis /var/log/redis; do
     fi
 done
 
-# 4. Rspamd persistent storage & runtime
+# 4. Rspamd & ClamAV persistent storage & runtime
 for p in /var/lib/rspamd /run/rspamd /var/log/rspamd; do
     if [ -d "${p}" ]; then
         chown -R _rspamd:_rspamd "${p}" 2>/dev/null || true
     fi
 done
+for p in /var/lib/clamav /run/clamav /var/log/clamav; do
+    if [ -d "${p}" ]; then
+        chown -R clamav:clamav "${p}" 2>/dev/null || true
+    fi
+done
+if [ -d /var/log/clamav ]; then
+    chmod 0755 /var/log/clamav 2>/dev/null || true
+    chmod 0644 /var/log/clamav/*.log 2>/dev/null || true
+fi
+if [ -d /etc/clamav ]; then
+    chown -R root:root /etc/clamav 2>/dev/null || true
+    chmod 0755 /etc/clamav 2>/dev/null || true
+    chmod 0644 /etc/clamav/*.conf 2>/dev/null || true
+fi
+if [ -d /etc/rspamd/local.d ]; then
+    chown -R root:_rspamd /etc/rspamd/local.d 2>/dev/null || true
+    chmod 0750 /etc/rspamd/local.d 2>/dev/null || true
+    chmod 0640 /etc/rspamd/local.d/* 2>/dev/null || true
+fi
 
 # 5. Admin API persistent state & configuration
 for p in /var/lib/grommunio-admin-common /var/lib/grommunio-admin-api /etc/grommunio-admin-api /run/grommunio-admin-api; do

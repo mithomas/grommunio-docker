@@ -42,19 +42,41 @@ acl_check_rcpt:
     message = relay not permitted
 
 acl_check_data:
-  # Bypass spam scanning for outgoing relays originating from container localhost
+  # Scan outbound relays originating from container localhost for viruses; block if infected
+  deny
+    hosts = 127.0.0.1 : ::1
+    spam = nobody:true/defer_ok
+    condition = ${if match{$spam_report}{CLAM_VIRUS}}
+    message = Malware detected in outbound message ($spam_report)
+
   accept
     hosts = 127.0.0.1 : ::1
 
   # Scan inbound messages using container Rspamd
   warn
     spam = nobody:true
-    add_header = X-Spam: Yes\nX-Spam-Score: $spam_score\nX-Spam-Report: $spam_report\nX-Spam-Action: $spam_action
+    add_header = X-Spam-Score: $spam_score\nX-Spam-Report: $spam_report\nX-Spam-Action: $spam_action
+
+  # Silently discard inbound virus matches when CLAMAV_ACTION=discard
+  discard
+    condition = ${if and{{eq{${CLAMAV_ACTION}}{discard}}{match{$spam_report}{CLAM_VIRUS}}}}
+    logwrite = Malware discarded by ClamAV policy ($spam_report)
 
   # Reject messages if Rspamd recommends rejection
   deny
     condition = ${if eq{$spam_action}{reject}}
     message   = Message rejected as spam ($spam_score)
+
+  # Quarantine inbound ClamAV virus matches: prepend '[VIRUS] ' to Subject and route to Junk
+  warn
+    condition = ${if match{$spam_report}{CLAM_VIRUS}}
+    remove_header = Subject
+    add_header = Subject: [VIRUS] $h_Subject:\nX-Virus-Scanned: ClamAV\nX-Virus-Status: Infected\nX-Spam-Flag: YES\nX-Spam: Yes
+
+  # Tag non-virus spam messages so Gromox LDA routes them to Junk without '[VIRUS] ' prefix
+  warn
+    condition = ${if and{{!match{$spam_report}{CLAM_VIRUS}}{or{{eq{$spam_action}{add header}}{eq{$spam_action}{rewrite subject}}}}}}
+    add_header = X-Spam-Flag: YES\nX-Spam: Yes
 
   accept
 

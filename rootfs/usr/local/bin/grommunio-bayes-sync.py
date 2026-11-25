@@ -48,6 +48,29 @@ def init_state_db(conn):
     conn.commit()
 
 
+def is_virus_message(eml_file, address, msg_id):
+    """Returns True if message headers indicate a quarantined ClamAV virus match."""
+    header_bytes = b""
+    if os.path.isfile(eml_file):
+        try:
+            with open(eml_file, "rb") as f_eml:
+                header_bytes = f_eml.read(16384)
+        except OSError:
+            return False
+    elif address:
+        try:
+            exm_proc = subprocess.run(
+                ["gromox-exm2eml", "-u", address, str(msg_id)],
+                capture_output=True,
+                timeout=20,
+            )
+            if exm_proc.returncode == 0 and exm_proc.stdout:
+                header_bytes = exm_proc.stdout[:16384]
+        except Exception:
+            return False
+    return b"X-Virus-Status: Infected" in header_bytes
+
+
 def learn_message(learn_type, eml_file, address, msg_id):
     """Pipes message payload to rspamc learn_spam or learn_ham."""
     cmd = ["rspamc", "-h", RSPAMD_CONTROLLER, f"learn_{learn_type}"]
@@ -138,16 +161,36 @@ def sync_mailbox(conn, user_db):
               ON l.mailbox = ? AND l.message_id = m.message_id
             WHERE m.parent_fid = {FOLDER_JUNK}
               AND COALESCE(m.is_deleted, 0) = 0 AND COALESCE(m.is_associated, 0) = 0
-              AND (l.learned_type IS NULL OR l.learned_type != 'spam');
+              AND (l.learned_type IS NULL OR l.learned_type NOT IN ('spam', 'virus'));
         """, (mailbox,))
 
         for msg_id, mid_str in cursor.fetchall():
             eml_file = os.path.join(mailbox_dir, "eml", mid_str or "")
+            if is_virus_message(eml_file, address, msg_id):
+                record(conn, mailbox, msg_id, mid_str, "virus")
+                logger.info("Skipped Bayes training for quarantined virus in %s (msg %s)", mailbox, msg_id)
+                continue
             if learn_message("spam", eml_file, address, msg_id):
                 record(conn, mailbox, msg_id, mid_str, "spam")
                 logger.info("Learned SPAM for %s (msg %s)", mailbox, msg_id)
 
-        # 2. Learned spam that left Junk, was soft-deleted, or was expunged
+        # 2. Prune quarantined virus records once removed from Junk or deleted
+        cursor.execute(f"""
+            SELECT l.message_id
+            FROM learned_messages l
+            LEFT JOIN userdb.messages m
+              ON m.message_id = l.message_id
+            WHERE l.mailbox = ? AND l.learned_type = 'virus'
+              AND (m.message_id IS NULL OR m.parent_fid != {FOLDER_JUNK} OR COALESCE(m.is_deleted, 0) = 1);
+        """, (mailbox,))
+        for (msg_id,) in cursor.fetchall():
+            conn.execute(
+                "DELETE FROM learned_messages WHERE mailbox = ? AND message_id = ?",
+                (mailbox, msg_id),
+            )
+            conn.commit()
+
+        # 3. Learned spam that left Junk, was soft-deleted, or was expunged
         cursor.execute(f"""
             SELECT l.message_id, l.mid_string, m.parent_fid, m.is_deleted
             FROM learned_messages l

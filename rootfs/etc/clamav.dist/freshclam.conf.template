@@ -1,0 +1,14 @@
+# ==============================================================================
+# ClamAV Signature Updater (freshclam) Configuration for Grommunio Container
+# ==============================================================================
+DatabaseOwner clamav
+DatabaseDirectory /var/lib/clamav
+UpdateLogFile /var/log/clamav/freshclam.log
+LogTime true
+PidFile /run/clamav/freshclam.pid
+DatabaseMirror database.clamav.net
+DNSDatabaseInfo current.cvd.clamav.net
+Checks 24
+NotifyClamd /etc/clamav/clamd.conf
+ConnectTimeout 15
+ReceiveTimeout 60

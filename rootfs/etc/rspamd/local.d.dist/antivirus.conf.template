@@ -1,0 +1,14 @@
+# Rspamd ClamAV Antivirus integration (rendered from /etc/rspamd/local.d.dist)
+clamav {
+  type = "clamav";
+  servers = "/run/clamav/clamd.ctl";
+  symbol = "CLAM_VIRUS";
+  score = 8.0;
+${CLAMAV_ACTION_LINE}
+  scan_mime_parts = true;
+  scan_text_mime = true;
+  text_part_min_words = 1;
+  scan_image_mime = false;
+  max_size = 33554432;
+  log_clean = false;
+}

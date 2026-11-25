@@ -23,12 +23,16 @@ services:
       - /var/lib/grommunio-web:rw,size=32M
       - /var/lib/php/sessions:rw,size=16M
       - /etc/exim4:rw,size=8M
+      - /etc/clamav:rw,size=4M
+      - /etc/rspamd/local.d:rw,size=4M
+      - /etc/supervisor:rw,size=4M
       - /etc/gromox:rw,size=16M
       - /etc/grommunio-admin-api:rw,size=16M
       - /etc/grommunio-admin-common:rw,size=4M
     volumes:
       - gromox_data:/var/lib/gromox:rw
       - antispam_data:/var/lib/rspamd:rw
+      - clamav_data:/var/lib/clamav:rw
       - redis_data:/var/lib/redis:rw
       - admin_data:/var/lib/grommunio-admin-common:rw
       - admin_api_data:/var/lib/grommunio-admin-api:rw
@@ -125,6 +129,8 @@ volumes:
     name: grommunio_gromox_data
   antispam_data:
     name: grommunio_antispam_data
+  clamav_data:
+    name: grommunio_clamav_data
   redis_data:
     name: grommunio_redis_data
   admin_data:

@@ -23,6 +23,9 @@ TMPFS = [
     "/var/lib/grommunio-web:rw,size=32M",
     "/var/lib/php/sessions:rw,size=16M",
     "/etc/exim4:rw,size=8M",
+    "/etc/clamav:rw,size=4M",
+    "/etc/rspamd/local.d:rw,size=4M",
+    "/etc/supervisor:rw,size=4M",
     "/etc/gromox:rw,size=16M",
     "/etc/grommunio-admin-api:rw,size=16M",
     "/etc/grommunio-admin-common:rw,size=4M",
@@ -33,6 +36,7 @@ TMPFS = [
 PERSISTENT = [
     "/var/lib/gromox",
     "/var/lib/rspamd",
+    "/var/lib/clamav",
     "/var/lib/redis",
     "/var/lib/grommunio-admin-api",
     "/var/lib/grommunio-admin-common",
@@ -148,7 +152,7 @@ class Container:
     def __init__(self, env=None, scratch=None, volumes=()):
         self.name = f"grommunio-t-{secrets.token_hex(4)}"
         self.volumes = list(volumes)
-        base = {"LDAP_ENABLED": "false"}
+        base = {"LDAP_ENABLED": "false", "CLAMAV_ENABLED": "false"}
         if scratch is not None:
             base.update(DB_NAME=scratch.name, DB_USER=scratch.user, DB_PASSWORD=scratch.password)
         else:

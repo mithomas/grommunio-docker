@@ -4,7 +4,7 @@ A production-ready, single-container Grommunio deployment based on Debian 13 (Tr
 
 Designed for seamless integration into existing infrastructure:
 - **MTA:** Host Exim delivers inbound mail via **SMTP** on port `2525` (no spam filtering needed on host).
-- **In-Container Filtering:** Container Exim filters incoming mail through Rspamd (`:11333` spamd protocol) before handing off to Gromox via internal LMTP (`:24`), automatically tagging spam and populating the Admin UI **Spam History** tab.
+- **In-Container Filtering:** Container Exim filters mail through Rspamd (`:11333`) and ClamAV (`clamd` + hourly `freshclam`), quarantining inbound viruses to **Junk E-mail** with a `[VIRUS] ` subject prefix, blocking outbound malware (`550`), and populating **Spam History**.
 - **Relay:** Outbound mail relays through container Exim back to host Exim on port `25`.
 - **Directory:** OpenLDAP / generic LDAP integration for user identities and authentication.
 - **Database:** Dedicated external MariaDB instance (or companion container for testing).
@@ -89,12 +89,13 @@ This configuration is tuned for **5 active users** and **10 ActiveSync devices**
 | **PHP-FPM (25 workers max)** | ~100 MB | ~700 MB |
 | **Gromox Core Daemons** | ~180 MB | ~250 MB |
 | **Rspamd + Bayes Sync** | ~70 MB | ~110 MB |
+| **ClamAV (`clamd` + `freshclam`)** | ~950 MB | ~1.05 GB |
 | **Redis** | ~30 MB | ~60 MB |
 | **Nginx + Supervisord** | ~30 MB | ~50 MB |
 | **Admin API (uWSGI)** | ~80 MB | ~90 MB |
-| **TOTAL** | **~490 MB** | **~1.25 GB** |
+| **TOTAL** | **~1.44 GB** | **~2.30 GB** |
 
-*Recommended host allocation:* **1.5 GB to 2.0 GB RAM** and **1 to 2 vCPUs**.
+*Recommended host allocation:* **2.5 GB to 3.0 GB RAM** (or **1.5 GB** with `CLAMAV_ENABLED=false`) and **1 to 2 vCPUs**.
 
 ---
 
@@ -343,14 +344,13 @@ docker compose exec grommunio grommunio-admin passwd <new_password>
 
 All persistent data is stored in named Docker volumes:
 - `grommunio_gromox_data`: Mailboxes, SQLite indices, and store metadata (`/var/lib/gromox`).
-- `grommunio_antispam_data`: Rspamd Bayes tracking state, custom maps, and stats (`/var/lib/rspamd`).
-- `grommunio_redis_data`: Redis snapshots, active sync tokens, and Bayes cache (`/var/lib/redis`).
-- `grommunio_exim_spool`: Exim mail queues, retry database, and pending relays (`/var/spool/exim4`).
-- `grommunio_log_data`: Persistent daemon and MTA log files for auditing and Monitoring UI (`/var/log`).
-- `grommunio_admin_data`: Admin API security state and configurations (`/var/lib/grommunio-admin-common`).
-- `grommunio_admin_api_data`: Admin API state database and session stores (`/var/lib/grommunio-admin-api`).
-- `grommunio_ldap_data`: OpenLDAP database directory (`/var/lib/ldap`) when running the test profile.
-- `grommunio_ldap_config`: OpenLDAP configuration directory (`/etc/ldap/slapd.d`) when running the test profile.
+- `grommunio_antispam_data`: Rspamd Bayes tracking state and stats (`/var/lib/rspamd`).
+- `grommunio_clamav_data`: ClamAV virus signature databases (`/var/lib/clamav`, updated hourly by `freshclam`).
+- `grommunio_redis_data`: Redis snapshots, sync tokens, and cache (`/var/lib/redis`).
+- `grommunio_exim_spool`: Exim mail queues and retry db (`/var/spool/exim4`).
+- `grommunio_log_data`: Persistent service logs for auditing and Monitoring UI (`/var/log`).
+- `grommunio_admin_data` & `grommunio_admin_api_data`: Admin API state and sessions (`/var/lib/grommunio-admin-*`).
+- `grommunio_ldap_data` & `grommunio_ldap_config`: OpenLDAP directory and config (test profile).
 
 ---
 
@@ -365,7 +365,8 @@ A standalone test suite validating all container services, endpoints, credential
 | **`tests/test_webmail_security.py`** | Validates root Webmail delivery, secure cookies, static assets, and logon/Origin handling. |
 | **`tests/test_admin_auth.py`** | Verifies Admin API authentication, JWT issuance, protected endpoints, and rejection of missing or forged tokens. |
 | **`tests/test_rspamd_auth.py`** | Verifies password protection on dedicated Rspamd dashboard (`:11334`). |
-| **`tests/test_mail_pipeline.py`** | End-to-end SMTP injection (`:2525`) -> Rspamd (`:11333`) -> LMTP (`:24`) -> mailbox and Spam History; GTUBE spam is rejected. |
+| **`tests/test_mail_pipeline.py`** | End-to-end SMTP (`:2525`) -> Rspamd (`:11333`) -> LMTP (`:24`) -> mailbox and Spam History; GTUBE rejected. |
+| **`tests/test_clamav.py`** | Validates ClamAV daemons, inbound EICAR quarantine to Junk with `[VIRUS] ` prefix, and outbound EICAR `550` block. |
 | **`tests/test_outbound_relay.py`** | Validates outbound smarthost relay, queue spooling during relay outages, and delivery upon recovery. |
 | **`tests/test_live_status.py`** | Validates Admin UI Live Status (`:8081`), VTS telemetry, and hop-by-hop sanitization. |
 | **`tests/test_monitoring_logs.py`** | Validates Admin UI Monitoring logs (`:8081`), file readers, and Exim log replacement. |
@@ -418,7 +419,7 @@ Each published image is tagged with:
 - `:<git-tag>`: Preserved if triggered by a Git tag push (e.g. `v1.0.0`).
 
 ### OCI Image Metadata Labels
-Published images embed standard OCI labels (`org.opencontainers.image.*`) detailing component versions (`created`, `revision`, and `version.{gromox,webmail,zpush,admin-api,admin-web,rspamd,exim,nginx,redis,php,debian}`).
+Published images embed standard OCI labels (`org.opencontainers.image.*`) detailing component versions (`created`, `revision`, and `version.{gromox,webmail,zpush,admin-api,admin-web,rspamd,clamav,exim,nginx,redis,php,debian}`).
 
 Inspect labels on any local or pulled image:
 ```bash

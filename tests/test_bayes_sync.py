@@ -280,6 +280,22 @@ def test_progress_is_committed_incrementally(fx):
 
 
 @with_fixture
+def test_quarantined_virus_in_junk_is_skipped_not_learned_as_spam_or_ham(fx):
+    mb = fx.mailbox("example.com", "testuser", "testuser@example.com")
+    mb.add(1, JUNK, "[VIRUS] Infected attachment")
+    eml_path = os.path.join(mb.path, "eml", "R-01/m1")
+    with open(eml_path, "w") as f:
+        f.write("Subject: [VIRUS] Infected attachment\nX-Virus-Status: Infected\n\nbody\n")
+    fx.run()
+    assert fx.calls() == [], "quarantined virus must not be sent to rspamc learn_spam"
+    assert fx.state() == [("example.com/testuser", 1, "virus")]
+    mb.update(1, parent_fid=INBOX)
+    fx.run()
+    assert fx.calls() == [], "moving virus out of Junk must not trigger learn_ham"
+    assert fx.state() == []
+
+
+@with_fixture
 def test_large_mailbox_unchanged_triggers_no_learning(fx):
     mb = fx.mailbox("example.com", "testuser", "testuser@example.com")
     mb.conn.executemany(
