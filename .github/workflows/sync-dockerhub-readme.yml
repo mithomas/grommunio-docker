@@ -24,13 +24,9 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v5
 
-      - name: Validate README size against Docker Hub 25KB limit
+      - name: Validate README size and static lint checks
         run: |
-          BYTES=$(wc -c < README.md)
-          echo "README.md size: ${BYTES} bytes (limit: 25000 bytes)"
-          if [ "$BYTES" -gt 25000 ]; then
-            echo "::warning::README.md (${BYTES} bytes) exceeds Docker Hub's 25,000-byte limit and will be truncated."
-          fi
+          python3 tests/test_lint.py
 
       - name: Update Docker Hub Description
         if: env.DOCKERHUB_TOKEN != '' && env.DOCKERHUB_USERNAME != ''

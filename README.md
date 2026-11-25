@@ -78,9 +78,9 @@ Designed for seamless integration into existing infrastructure:
 
 This configuration is tuned for **5 active users** and **10 ActiveSync devices** (phones, tablets, desktop clients):
 
-- **PHP-FPM Worker Pool (`www.conf`):** `pm = dynamic`, `pm.max_children = 25` (handles EAS long-polling pings + concurrent Webmail requests), `pm.start_servers = 4`, `pm.min_spare_servers = 2`, `pm.max_spare_servers = 8`, `pm.max_requests = 1000`.
-- **Redis (`--maxmemory 128mb`):** `volatile-lru` eviction for sync locks and Bayes tokens (~30–60MB).
-- **Gromox Daemons:** Ingest concurrency up to 5 LDA threads and 50 client contexts (~180–250MB).
+- **PHP-FPM Worker Pool (`www.conf`):** `pm = dynamic`, `pm.max_children = 25` (EAS long-polling + Webmail), `pm.start_servers = 4`, `pm.min_spare_servers = 2`, `pm.max_spare_servers = 8`, `pm.max_requests = 1000`.
+- **Redis (`--maxmemory 128mb`):** `volatile-lru` eviction for sync locks and Bayes tokens (~30-60MB).
+- **Gromox Daemons:** Up to 5 LDA threads and 50 client contexts (~180-250MB).
 - **Admin API (uWSGI):** 1 worker process with 4 threads (~80MB).
 
 ### Memory Footprint Summary
@@ -227,48 +227,26 @@ server {
 
 ## Administration & CLI
 
-### Container Health & Lifecycle Status
-Check container health state reported by Docker:
+### Health, Services & Storage
 ```bash
+# Check Docker health status or run the internal healthcheck directly
 docker inspect --format='{{json .State.Health.Status}}' grommunio
-```
-Directly run the internal health check probe:
-```bash
 docker compose exec grommunio /usr/local/bin/container-healthcheck.sh
-```
 
-### Check Running Services
-```bash
+# Check running services, Bayes stats, or trigger an immediate Bayes sync
 docker compose exec grommunio supervisorctl status
-```
-
-### Inspect Bayes Learning Statistics
-```bash
 docker compose exec grommunio rspamc stat
-```
-
-Trigger an immediate Bayes sync:
-```bash
 docker compose exec grommunio /usr/local/bin/grommunio-bayes-sync.py
-```
 
-### Check Storage & Log Volume Utilization
-Inspect persistent volume disk space (`/var/log` and `/var/lib/gromox`):
-```bash
+# Check persistent volume disk space and repair mailbox permissions on demand
 docker compose exec grommunio df -h /var/log /var/lib/gromox
-```
-
-### Repair Mailbox Volume Permissions (On-Demand)
-Normal startup enforces $O(1)$ shallow ownership on `/var/lib/gromox` without scanning user mailboxes. If migrating an existing volume or restoring backups with mismatched UIDs, run a one-time recursive repair:
-```bash
 docker compose exec grommunio /usr/local/bin/grommunio-fix-permissions.sh
 ```
-*(Or set `GROMOX_FIX_PERMISSIONS=true` in `.env` for a single startup)*
+*(Normal startup applies $O(1)$ shallow ownership on `/var/lib/gromox`; run `grommunio-fix-permissions.sh` or set `GROMOX_FIX_PERMISSIONS=true` after migrating volumes or restoring backups.)*
 
 ### Backup & Disaster Recovery
 For point-in-time consistency requirements, backup automation, and clean-host disaster recovery procedures, refer to the [**Backup & Disaster Recovery Playbook**](BACKUP_AND_RESTORE.md).
 
-Quick MariaDB & volume backup commands:
 ```bash
 # Transactionally consistent database dump
 docker compose exec -T mariadb mariadb-dump -u root -p"${DB_ROOT_PASSWORD:-root_secret}" \
@@ -281,60 +259,37 @@ docker compose up -d grommunio
 ```
 
 ### Log Rotation & 1-Year Retention Policy
-All application logs under `/var/log` are managed by in-container `logrotate` running via `grommunio-logrotate`:
-- **Policy:** Rotates weekly, keeping 53 compressed archives (371 days > 1 full year) with `maxage 365` and `maxsize 25M`.
-- **Continuity:** Uses `copytruncate` so active daemons continue writing to current logs without restarting.
-- **Admin UI Integration:** The Admin UI Monitoring tab automatically reads `.1` archives across rotations to maintain continuous log tails.
-- **Storage Footprint:** Under typical 5-user workloads, 1 full year of compressed logs consumes ~100MB to 200MB of disk space.
+All logs under `/var/log` are rotated by `grommunio-logrotate` (`copytruncate`, 53 weekly archives, `maxage 365`, `maxsize 25M`, ~100-200MB/year for 5 users). The Admin UI Monitoring tab reads `.1` archives across rotations for continuous log tails.
 
 ### Synchronize Users from OpenLDAP
 
 > **Mailbox Provisioning Note:**
 > Gromox validates credentials against LDAP but requires user records and mailbox stores in MariaDB before authentication succeeds. Synchronize LDAP accounts into MariaDB using `downsync`:
 
-1. Verify domain registration:
 ```bash
+# 1. Create domain  2. Verify LDAP connection  3. Search user  4. Downsync & provision mailbox
 docker compose exec grommunio grommunio-admin domain create example.com
-```
-
-2. Test OpenLDAP connection:
-```bash
 docker compose exec grommunio grommunio-admin ldap info
-```
-
-3. Search LDAP directory (e.g. for bootstrap user):
-```bash
 docker compose exec grommunio grommunio-admin ldap search testuser
-```
-
-4. Perform user synchronization and mailbox provisioning:
-```bash
 docker compose exec grommunio grommunio-admin ldap downsync -c
 ```
-*(This creates the MariaDB user record, initializes the SQLite/exmdb store under `/var/lib/gromox/user/example.com/testuser`, and assigns mailbox permissions. After this command, `testuser@example.com` can log in immediately with password `testuser_secret`.)*
+*(Creates the MariaDB user record and SQLite store under `/var/lib/gromox/user/example.com/testuser`.)*
 
-#### Initial Seed Accounts & Groups
+#### Initial Seed Accounts & Groups (`--profile test`)
 
-When launching the companion OpenLDAP service (`docker compose --profile test up -d`), the directory is pre-seeded via `ldap-bootstrap/01-init.ldif` with the following credentials:
+When launching with `--profile test`, OpenLDAP is pre-seeded via `ldap-bootstrap/01-init.ldif`:
 
 | Attribute | Value |
 | :--- | :--- |
-| **Username (UID)** | `testuser` |
-| **User DN** | `uid=testuser,ou=users,dc=example,dc=com` |
-| **Email Address** | `testuser@example.com` |
-| **Email Alias** | `alias.testuser@example.com` |
-| **Password** | `testuser_secret` |
-| **Display Name** | `Test User` |
-| **Group Membership** | `cn=grommunio-users,ou=groups,dc=example,dc=com` (`grommunio-users@example.com`) |
-| **Directory Admin DN** | `cn=admin,dc=example,dc=com` (Password: `ldap_secret`) |
+| **User / DN** | `testuser` (`uid=testuser,ou=users,dc=example,dc=com`) |
+| **Email / Alias** | `testuser@example.com` (alias: `alias.testuser@example.com`) |
+| **User Password** | `testuser_secret` |
+| **Group** | `cn=grommunio-users,ou=groups,dc=example,dc=com` (`grommunio-users@example.com`) |
+| **LDAP Admin DN** | `cn=admin,dc=example,dc=com` (Password: `ldap_secret`) |
 
-### Modify User Permissions (e.g. enable ActiveSync)
+### User Permissions & Admin Password
 ```bash
 docker compose exec grommunio grommunio-admin user modify user@example.com --privEas 1
-```
-
-### Reset Admin Password
-```bash
 docker compose exec grommunio grommunio-admin passwd <new_password>
 ```
 
